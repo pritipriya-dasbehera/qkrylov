@@ -44,10 +44,13 @@ target_compile_definitions(qkrylov_fp64 PUBLIC QKRYLOV_DOUBLE_PRECISION)
 target_compile_features(qkrylov_fp64 PUBLIC cxx_std_20)
 set_target_properties(qkrylov_fp64 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(qkrylov $<TARGET_OBJECTS:qkrylov_fp32> $<TARGET_OBJECTS:qkrylov_fp64> src/c_api.cpp)
+add_library(qkrylov SHARED $<TARGET_OBJECTS:qkrylov_fp32> $<TARGET_OBJECTS:qkrylov_fp64> src/c_api.cpp)
 add_library(qkrylov::qkrylov ALIAS qkrylov)
 target_compile_features(qkrylov PUBLIC cxx_std_20)
-set_target_properties(qkrylov PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(qkrylov PROPERTIES 
+    POSITION_INDEPENDENT_CODE ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
 
 if(MSVC)
     target_compile_definitions(qkrylov_fp32 PUBLIC _USE_MATH_DEFINES)
@@ -59,6 +62,11 @@ if(APPLE)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X version" FORCE)
     endif()
     add_compile_options(-faligned-allocation)
+    if(EXISTS "/opt/homebrew/opt/libomp")
+        list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew/opt/libomp")
+    elseif(EXISTS "/usr/local/opt/libomp")
+        list(APPEND CMAKE_PREFIX_PATH "/usr/local/opt/libomp")
+    endif()
 endif()
 
 # find_package(Kokkos QUIET)
