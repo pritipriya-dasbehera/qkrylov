@@ -53,13 +53,17 @@ jobs:
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install libomp
+        run: |
+          export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          brew install libomp
 
       - name: Configure and Build C++ Library
         shell: bash
         run: |
           cmake -B build -S . \
             -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
             -DQKRYLOV_BUILD_TESTS=OFF \
             -DQKRYLOV_BUILD_EXAMPLES=OFF \
             -DQKRYLOV_BUILD_PYTHON=OFF \
@@ -72,32 +76,43 @@ jobs:
         with:
           version: '1.10'
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Package Artifact and Compute Tree Hash
         shell: bash
         run: |
           julia -e '
-          using Tar, SHA
-          staging_dir = "artifact_staging"
-          triple = "${{ matrix.platform }}"
-          tarball = "qkrylov-$(triple).tar.gz"
+          using Tar
+          Tar.create("artifact_staging", "archive.tar")
+          tree_sha = Tar.tree_hash("archive.tar")
+          write("tree_sha.txt", tree_sha)
+          '
+          python -c '
+          import gzip, shutil, hashlib, json
 
-          # Package staging directory into a tar.gz archive
-          open(tarball, "w") do io
-              Tar.create(staging_dir, io)
-          end
+          tarball = "qkrylov-${{ matrix.platform }}.tar.gz"
+          with open("archive.tar", "rb") as f_in, gzip.open(tarball, "wb", 9) as f_out:
+              shutil.copyfileobj(f_in, f_out)
 
-          file_sha = bytes2hex(open(sha256, tarball))
-          tree_sha = Tar.tree_hash(staging_dir)
+          with open(tarball, "rb") as f:
+              file_sha = hashlib.sha256(f.read()).hexdigest()
 
-          meta = """{
-            "platform": "$(triple)",
-            "os": "${{ matrix.os_name }}",
-            "arch": "${{ matrix.arch }}",
-            "tarball": "$(tarball)",
-            "sha256": "$(file_sha)",
-            "git_tree_sha1": "$(tree_sha)"
-          }"""
-          write("metadata-$(triple).json", meta)
+          with open("tree_sha.txt") as f:
+              tree_sha = f.read().strip()
+
+          meta = {
+              "platform": "${{ matrix.platform }}",
+              "os": "${{ matrix.os_name }}",
+              "arch": "${{ matrix.arch }}",
+              "tarball": tarball,
+              "sha256": file_sha,
+              "git_tree_sha1": tree_sha
+          }
+          with open("metadata-${{ matrix.platform }}.json", "w") as f:
+              json.dump(meta, f, indent=2)
           '
 
       - name: Upload Binary Artifact
@@ -127,10 +142,10 @@ jobs:
           pattern: binary-*
           merge-multiple: true
 
-      - name: Set up Julia
-        uses: julia-actions/setup-julia@v2
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          version: '1.10'
+          python-version: '3.11'
 
       - name: Determine Release Tag
         shell: bash
@@ -158,37 +173,32 @@ jobs:
       - name: Generate Artifacts.toml
         shell: bash
         run: |
-          julia -e '
-          repo = get(ENV, "GITHUB_REPOSITORY", "sjp95/qkrylov")
-          tag = ENV["TAG_NAME"]
+          python -c '
+          import os, glob, json
 
-          meta_files = sort(filter(f -> startswith(f, "metadata-") && endswith(f, ".json"), readdir(".")))
+          repo = os.environ.get("GITHUB_REPOSITORY", "sjp95/qkrylov")
+          tag = os.environ.get("TAG_NAME", "latest-binaries")
 
-          open("Artifacts.toml", "w") do io
-              println(io, "# Auto-generated Artifacts.toml for QuantumKrylov ($tag)")
-              for mf in meta_files
-                  txt = read(mf, String)
-                  platform = match(r"\"platform\":\s*\"([^\"]+)\"", txt)[1]
-                  os = match(r"\"os\":\s*\"([^\"]+)\"", txt)[1]
-                  arch = match(r"\"arch\":\s*\"([^\"]+)\"", txt)[1]
-                  tarball = match(r"\"tarball\":\s*\"([^\"]+)\"", txt)[1]
-                  sha256 = match(r"\"sha256\":\s*\"([^\"]+)\"", txt)[1]
-                  tree_sha = match(r"\"git_tree_sha1\":\s*\"([^\"]+)\"", txt)[1]
-                  url = "https://github.com/$(repo)/releases/download/$(tag)/$(tarball)"
-
-                  println(io, "")
-                  println(io, "[[libqkrylov]]")
-                  println(io, "git-tree-sha1 = \"$(tree_sha)\"")
-                  println(io, "")
-                  println(io, "    [[libqkrylov.download]]")
-                  println(io, "    url = \"$(url)\"")
-                  println(io, "    sha256 = \"$(sha256)\"")
-                  println(io, "")
-                  println(io, "    [libqkrylov.os]")
-                  println(io, "    os = \"$(os)\"")
-                  println(io, "    arch = \"$(arch)\"")
-              end
-          end
+          meta_files = sorted(glob.glob("metadata-*.json"))
+          
+          with open("Artifacts.toml", "w") as out:
+              out.write(f"# Auto-generated Artifacts.toml for QuantumKrylov ({tag})\n")
+              for mf in meta_files:
+                  with open(mf) as f:
+                      d = json.load(f)
+                  tarball = d["tarball"]
+                  arch = d["arch"]
+                  tree_sha = d["git_tree_sha1"]
+                  os_name = d["os"]
+                  file_sha = d["sha256"]
+                  url = f"https://github.com/{repo}/releases/download/{tag}/{tarball}"
+                  out.write(f"\n[[libqkrylov]]\n")
+                  out.write(f"arch = \"{arch}\"\n")
+                  out.write(f"git-tree-sha1 = \"{tree_sha}\"\n")
+                  out.write(f"os = \"{os_name}\"\n\n")
+                  out.write(f"    [[libqkrylov.download]]\n")
+                  out.write(f"    sha256 = \"{file_sha}\"\n")
+                  out.write(f"    url = \"{url}\"\n")
           '
           cp Artifacts.toml bindings/julia/Artifacts.toml
 
