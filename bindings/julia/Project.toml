@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["qkrylov contributors"]
 
 [deps]
-Artifacts = "56f22d72-fdac-5304-e259-4b4d0b0fe2e8"
+Artifacts = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
 [compat]
 julia = "1.10"
