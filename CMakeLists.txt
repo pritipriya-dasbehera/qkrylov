@@ -54,6 +54,13 @@ if(MSVC)
     target_compile_definitions(qkrylov_fp64 PUBLIC _USE_MATH_DEFINES)
 endif()
 
+if(APPLE)
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X version" FORCE)
+    endif()
+    add_compile_options(-faligned-allocation)
+endif()
+
 # find_package(Kokkos QUIET)
 if(NOT Kokkos_FOUND)
     message(STATUS "Kokkos not found on system. Fetching Kokkos 4.3.01 from GitHub...")

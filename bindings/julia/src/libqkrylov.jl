@@ -26,7 +26,30 @@ function find_libqkrylov()
         end
     end
 
-    # 3. Production prebuilt binary from qkrylov_jll (Primary fallback)
+    # 3. Native Julia Artifacts resolution (auto-downloaded by Pkg via Artifacts.toml)
+    try
+        artifacts_file = joinpath(@__DIR__, "..", "Artifacts.toml")
+        if isfile(artifacts_file)
+            artifact_dir = @artifact_str("libqkrylov")
+            for candidate_rel in [
+                joinpath("lib", "libqkrylov.so"),
+                joinpath("lib", "libqkrylov.dylib"),
+                joinpath("lib", "qkrylov.dll"),
+                joinpath("bin", "qkrylov.dll"),
+                "libqkrylov.so",
+                "libqkrylov.dylib",
+                "qkrylov.dll"
+            ]
+                candidate_path = joinpath(artifact_dir, candidate_rel)
+                if isfile(candidate_path)
+                    return candidate_path
+                end
+            end
+        end
+    catch
+    end
+
+    # 4. Fallback to qkrylov_jll if available in runtime environment
     try
         if isdefined(QuantumKrylov, :qkrylov_jll) && isdefined(qkrylov_jll, :libqkrylov)
             return qkrylov_jll.libqkrylov
@@ -34,7 +57,7 @@ function find_libqkrylov()
     catch
     end
 
-    # 4. Fallback to system library resolution
+    # 5. Fallback to system library resolution
     return "libqkrylov"
 end
 

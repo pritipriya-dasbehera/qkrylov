@@ -1,6 +1,6 @@
 module QuantumKrylov
 
-using qkrylov_jll
+using Artifacts
 
 const VERSION = v"0.1.0"
 
