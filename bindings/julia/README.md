@@ -27,14 +27,28 @@ The Julia interface is constructed directly on top of the binary-stable C ABI ex
 
 ## Installation
 
-Install the package directly via Julia's Package Manager:
+### Option 1: Direct GitHub Installation for latest release (Prebuilt Binaries)
 
+You can install `QuantumKrylov.jl` directly from the `julia-release` branch. Julia's built-in **Artifacts** system automatically downloads and configures the native prebuilt binary (`libqkrylov.so`, `libqkrylov.dylib`, or `qkrylov.dll`) for your operating system and CPU architecture:
+
+In the Julia REPL (press `]` to open Pkg mode):
+```julia
+pkg> add https://github.com/sjp95/qkrylov.git#julia-release:bindings/julia
+```
+
+Or programmatically in Julia scripts:
+```julia
+using Pkg
+Pkg.add(url="https://github.com/sjp95/qkrylov.git", rev="julia-release", subdir="bindings/julia")
+```
+
+*(No C++ compiler, CMake, or extra build tools required!)*
+
+### Option 2: General Registry for stable release (Recommended)
 ```julia
 using Pkg
 Pkg.add("QuantumKrylov")
 ```
-
-No C++ compiler or CMake build is required—`QuantumKrylov.jl` automatically downloads precompiled `qkrylov_jll` binary artifacts for your OS and CPU architecture.
 
 ### Development Setup (Local Repository)
 If you are developing locally from the source repository:

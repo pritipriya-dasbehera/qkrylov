@@ -31,8 +31,14 @@ A modern C++20 framework for matrix-free Krylov methods in quantum many-body phy
 
 ## Quick Start
 
-### For Julia Users (No C++ Compiler Required)
+### For Julia Users
+Install the latest release directly from GitHub:
 ```julia
+using Pkg
+Pkg.add(url="https://github.com/sjp95/qkrylov.git", rev="julia-release", subdir="bindings/julia")
+```
+Or grab it from JuliaRegistry
+```
 using Pkg
 Pkg.add("QuantumKrylov")
 ```
@@ -141,7 +147,7 @@ println("Convergence status:  ", res.converged)
 
 ## Documentation
 
-Comprehensive Julia package documentation is available at:
+Comprehensive, but poorly written, Julia package documentation is available at:
 - **Core Concepts Guide**: [`bindings/julia/documentation.md`](bindings/julia/documentation.md)
 - **Julia Binding README**: [`bindings/julia/README.md`](bindings/julia/README.md)
 
