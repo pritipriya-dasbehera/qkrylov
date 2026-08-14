@@ -75,13 +75,13 @@ function add_term!(op::OpSum, coeff::Number, ops::AbstractVector{<:AbstractStrin
     c = ComplexF64(coeff)
     c_ops = [string(o) for o in ops]
     c_sites = Cint[Cint(s) for s in sites]
-    ops_ptrs = [pointer(s) for s in c_ops]
+    ops_ptrs = Ptr{Cchar}[pointer(s) for s in c_ops]
 
     GC.@preserve c_ops c_sites ops_ptrs begin
         status = ccall(
             (:qkrylov_opsum_add_term_nbody, libqkrylov),
             Cint,
-            (Ptr{Cvoid}, Cfloat, Cfloat, Cint, Ptr{Cstring}, Ptr{Cint}),
+            (Ptr{Cvoid}, Cfloat, Cfloat, Cint, Ptr{Ptr{Cchar}}, Ptr{Cint}),
             op.ptr, Cfloat(real(c)), Cfloat(imag(c)), Cint(n_factors), ops_ptrs, c_sites
         )
     end
