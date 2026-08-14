@@ -1,0 +1,37 @@
+# Auto-generated Artifacts.toml for QuantumKrylov (latest-binaries)
+
+[[libqkrylov]]
+arch = "aarch64"
+git-tree-sha1 = "83c42e365f16bff503b4395d12f7d155d642c4b7"
+os = "macos"
+
+    [[libqkrylov.download]]
+    sha256 = "a98fbe98483c79c5086e1e011c95719a83f1105ae84329bde726e9661420e486"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-aarch64-apple-darwin.tar.gz"
+
+[[libqkrylov]]
+arch = "aarch64"
+git-tree-sha1 = "f9198bc82d47239ebc3920188f017d8cc5465ecb"
+os = "linux"
+
+    [[libqkrylov.download]]
+    sha256 = "5dc0270bd00429a07cfe35185da5cbc5ff638c71a5c098e5eaa1f950d54b501f"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-aarch64-linux-gnu.tar.gz"
+
+[[libqkrylov]]
+arch = "x86_64"
+git-tree-sha1 = "10cf755f2e4e5b453f345301859ea8d68cf87018"
+os = "linux"
+
+    [[libqkrylov.download]]
+    sha256 = "136b52387789b4c3387f93c04a6461cef30b085580a6ba5590fe6a9c808b70a3"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-linux-gnu.tar.gz"
+
+[[libqkrylov]]
+arch = "x86_64"
+git-tree-sha1 = "b43fecaeba72371c54e8f0e7a63893602e51178f"
+os = "windows"
+
+    [[libqkrylov.download]]
+    sha256 = "d024ab8217d8b08398e41327e83df711373ddbcc21d8754ee7e5af9ac6d745b1"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-w64-mingw32.tar.gz"

@@ -1,0 +1,218 @@
+name: Build and Release Julia Binaries
+
+on:
+  push:
+    branches:
+      - julia-release
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release Tag name (default: latest-binaries)'
+        required: false
+        default: 'latest-binaries'
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64-linux-gnu
+            os: ubuntu-latest
+            os_name: linux
+            arch: x86_64
+          - platform: aarch64-linux-gnu
+            os: ubuntu-24.04-arm
+            os_name: linux
+            arch: aarch64
+          - platform: aarch64-apple-darwin
+            os: macos-14
+            os_name: macos
+            arch: aarch64
+          - platform: x86_64-w64-mingw32
+            os: windows-latest
+            os_name: windows
+            arch: x86_64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          brew install libomp
+
+      - name: Configure and Build C++ Library
+        shell: bash
+        run: |
+          EXTRA_FLAGS=""
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            OPENMP_PREFIX=$(brew --prefix libomp)
+            EXTRA_FLAGS="-DOpenMP_ROOT=${OPENMP_PREFIX} -DCMAKE_PREFIX_PATH=${OPENMP_PREFIX}"
+          fi
+
+          cmake -B build -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQKRYLOV_BUILD_TESTS=OFF \
+            -DQKRYLOV_BUILD_EXAMPLES=OFF \
+            -DQKRYLOV_BUILD_PYTHON=OFF \
+            -DCMAKE_INSTALL_PREFIX=artifact_staging \
+            $EXTRA_FLAGS
+          cmake --build build --config Release -j 4
+          cmake --install build --config Release
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Package Artifact and Compute Tree Hash
+        shell: bash
+        run: |
+          julia -e '
+          using Tar
+          Tar.create("artifact_staging", "archive.tar")
+          tree_sha = Tar.tree_hash("archive.tar")
+          write("tree_sha.txt", tree_sha)
+          '
+          python -c '
+          import gzip, shutil, hashlib, json
+
+          tarball = "qkrylov-${{ matrix.platform }}.tar.gz"
+          with open("archive.tar", "rb") as f_in, gzip.open(tarball, "wb", 9) as f_out:
+              shutil.copyfileobj(f_in, f_out)
+
+          with open(tarball, "rb") as f:
+              file_sha = hashlib.sha256(f.read()).hexdigest()
+
+          with open("tree_sha.txt") as f:
+              tree_sha = f.read().strip()
+
+          meta = {
+              "platform": "${{ matrix.platform }}",
+              "os": "${{ matrix.os_name }}",
+              "arch": "${{ matrix.arch }}",
+              "tarball": tarball,
+              "sha256": file_sha,
+              "git_tree_sha1": tree_sha
+          }
+          with open("metadata-${{ matrix.platform }}.json", "w") as f:
+              json.dump(meta, f, indent=2)
+          '
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: |
+            qkrylov-${{ matrix.platform }}.tar.gz
+            metadata-${{ matrix.platform }}.json
+
+  publish-and-update-artifacts:
+    name: Publish Release & Update Artifacts.toml
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout julia-release branch
+        uses: actions/checkout@v4
+        with:
+          ref: julia-release
+          fetch-depth: 0
+
+      - name: Download all built binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Determine Release Tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          elif [ -n "${{ inputs.release_tag }}" ]; then
+            TAG_NAME="${{ inputs.release_tag }}"
+          else
+            TAG_NAME="latest-binaries"
+          fi
+          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_ENV"
+
+      - name: Publish Assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload "$TAG_NAME" qkrylov-*.tar.gz --clobber || \
+          gh release create "$TAG_NAME" qkrylov-*.tar.gz \
+            --title "Prebuilt Binaries ($TAG_NAME)" \
+            --notes "Automated multi-platform native binary release for QuantumKrylov Julia bindings." \
+            --target "$GITHUB_SHA"
+
+      - name: Generate Artifacts.toml
+        shell: bash
+        run: |
+          python -c '
+          import os, glob, json
+
+          repo = os.environ.get("GITHUB_REPOSITORY", "sjp95/qkrylov")
+          tag = os.environ.get("TAG_NAME", "latest-binaries")
+
+          meta_files = sorted(glob.glob("metadata-*.json"))
+          
+          with open("Artifacts.toml", "w") as out:
+              out.write(f"# Auto-generated Artifacts.toml for QuantumKrylov ({tag})\n")
+              for mf in meta_files:
+                  with open(mf) as f:
+                      d = json.load(f)
+                  tarball = d["tarball"]
+                  arch = d["arch"]
+                  tree_sha = d["git_tree_sha1"]
+                  os_name = d["os"]
+                  file_sha = d["sha256"]
+                  url = f"https://github.com/{repo}/releases/download/{tag}/{tarball}"
+                  out.write(f"\n[[libqkrylov]]\n")
+                  out.write(f"arch = \"{arch}\"\n")
+                  out.write(f"git-tree-sha1 = \"{tree_sha}\"\n")
+                  out.write(f"os = \"{os_name}\"\n\n")
+                  out.write(f"    [[libqkrylov.download]]\n")
+                  out.write(f"    sha256 = \"{file_sha}\"\n")
+                  out.write(f"    url = \"{url}\"\n")
+          '
+          cp Artifacts.toml bindings/julia/Artifacts.toml
+
+      - name: Commit and Push Updated Artifacts.toml
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bindings/julia/Artifacts.toml
+          if ! git diff --staged --quiet; then
+            git commit -m "Update Artifacts.toml for ${TAG_NAME} [skip ci]"
+            git push origin julia-release
+          else
+            echo "Artifacts.toml is already up-to-date."
+          fi
