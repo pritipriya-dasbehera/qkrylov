@@ -46,7 +46,7 @@ uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 version = "1.11.0"
 
 [[deps.QuantumKrylov]]
-deps = ["qkrylov_jll"]
+deps = ["Libdl", "qkrylov_jll"]
 path = "."
 uuid = "ded8de50-d5ab-4d43-aa04-497c0da83418"
 version = "0.1.0"

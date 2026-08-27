@@ -130,10 +130,10 @@ is_present = st0 in basis_sec # Returns true
 
 | Basis Constructor | Parameters | Default Values | Description |
 | :--- | :--- | :--- | :--- |
-| `SpinHalfBasis(num_sites, sector)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}` | `num_sites`: Required<br>`sector`: `nothing` | Spin-1/2 basis on `num_sites` sites. Default `sector=nothing` creates full $2^N$ basis. |
-| `FermionBasis(num_sites, sector)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}` | `num_sites`: Required<br>`sector`: `nothing` | Spinless fermion basis on `num_sites` sites. Default `sector=nothing` creates full $2^N$ basis. |
-| `HubbardBasis(num_sites, sector)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}` | `num_sites`: Required<br>`sector`: `nothing` | Fermi-Hubbard basis on `num_sites` sites. Default `sector=nothing` creates full $4^N$ basis. |
-| `TJBasis(num_sites, sector)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}` | `num_sites`: Required<br>`sector`: `nothing` | $t$-$J$ model basis on `num_sites` sites. Default `sector=nothing` creates full $3^N$ basis. |
+| `SpinHalfBasis(num_sites, sector=nothing; sz=nothing)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}`<br>`sz::Union{Real, Nothing}` | `num_sites`: Required<br>`sector`: `nothing`<br>`sz`: `nothing` | Spin-1/2 basis on `num_sites` sites. Passing `sz=0` automatically builds total $S_z=0$ sector. |
+| `FermionBasis(num_sites, sector=nothing; n=nothing)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}`<br>`n::Union{Integer, Nothing}` | `num_sites`: Required<br>`sector`: `nothing`<br>`n`: `nothing` | Spinless fermion basis on `num_sites` sites. Passing `n=2` restricts to 2-particle sector. |
+| `HubbardBasis(num_sites, sector=nothing; nup=nothing, ndn=nothing)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}`<br>`nup, ndn::Union{Integer, Nothing}` | `num_sites`: Required<br>`sector`: `nothing`<br>`nup, ndn`: `nothing` | Fermi-Hubbard basis on `num_sites` sites with optional electron number conservation. |
+| `TJBasis(num_sites, sector=nothing; nup=nothing, ndn=nothing)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}`<br>`nup, ndn::Union{Integer, Nothing}` | `num_sites`: Required<br>`sector`: `nothing`<br>`nup, ndn`: `nothing` | $t$-$J$ model basis on `num_sites` sites with optional electron number conservation. |
 
 ### Basis Operations & Query Functions
 
@@ -199,6 +199,10 @@ clear!(op)
 | `Sx(site)`, `Sy(site)` | `site::Integer` | Spin-1/2 operators ($S^x, S^y$) at 0-indexed `site`. |
 | `n(site)` | `site::Integer` | Particle number operator ($n_i$) at 0-indexed `site`. |
 | `c(site)`, `cdag(site)` | `site::Integer` | Fermionic annihilation ($c_i$) and creation ($c_i^\dagger$) operators at 0-indexed `site`. |
+| `CdagUp(site)`, `CUp(site)` | `site::Integer` | Spin-up electron creation ($c_{i,\uparrow}^\dagger$) and annihilation ($c_{i,\uparrow}$) operators. |
+| `CdagDn(site)`, `CDn(site)` | `site::Integer` | Spin-down electron creation ($c_{i,\downarrow}^\dagger$) and annihilation ($c_{i,\downarrow}$) operators. |
+| `Nup(site)`, `Ndn(site)`, `Nupdn(site)` | `site::Integer` | Electron number operators ($n_{i,\uparrow}, n_{i,\downarrow}, n_{i,\uparrow} n_{i,\downarrow}$). |
+| `Bdag(site)`, `B(site)`, `N(site)` | `site::Integer` | Boson creation ($b_i^\dagger$), annihilation ($b_i$), and number ($n_i$) operators. |
 | `coeff * term * ...` | `coeff::Number`, `term::OpTerm` | Multiplies operator factors and scales coupling coefficient. |
 | `term1 + term2` | `term1`, `term2` | Combines operator terms into an `OpExpr` term collection. |
 | `op += expr` | `op::OpSum`, `expr::OpExpr` | Appends operator terms into `OpSum`. |
@@ -257,8 +261,8 @@ sz  = size(H)      # (16, 16)
 
 | Function / Syntax | Arguments | Return Type | Description |
 | :--- | :--- | :--- | :--- |
-| `MatrixFreeHamiltonian(basis, opsum)` | `basis::AbstractBasis`<br>`opsum::OpSum` | `MatrixFreeHamiltonian` | **Convenience Constructor**. Automatically infers the matching default `Site` model (`SpinHalfSite`, `FermionSite`, `HubbardSite`, or `TJSite`) from the basis type. |
-| `MatrixFreeHamiltonian(basis, site, opsum)` | `basis::AbstractBasis`<br>`site::AbstractSite`<br>`opsum::OpSum` | `MatrixFreeHamiltonian` | **Explicit Constructor**. Constructs a matrix-free Hamiltonian operator with a specified site model. |
+| `MatrixFreeHamiltonian(basis, opsum; device="cpu")` | `basis::AbstractBasis`<br>`opsum::OpSum`<br>`device::AbstractString="cpu"` | `MatrixFreeHamiltonian` | **Convenience Constructor**. Automatically infers the matching default `Site` model (`SpinHalfSite`, `FermionSite`, `HubbardSite`, or `TJSite`) from the basis type. Targets specified execution `device` (default `"cpu"`). |
+| `MatrixFreeHamiltonian(basis, site, opsum; device="cpu")` | `basis::AbstractBasis`<br>`site::AbstractSite`<br>`opsum::OpSum`<br>`device::AbstractString="cpu"` | `MatrixFreeHamiltonian` | **Explicit Constructor**. Constructs a matrix-free Hamiltonian operator with a specified site model on target `device`. |
 | `H * x` | `H::MatrixFreeHamiltonian`<br>`x::AbstractVector{<:Number}` | `Vector{ComplexF64}` | Performs zero-copy matrix-vector multiplication $y = H \cdot x$. Length of `x` must equal `dimension(H)`. |
 | `diagonal(H)` | `H::MatrixFreeHamiltonian` | `Vector{Float64}` | Computes and returns matrix-free diagonal elements $H_{ii}$. |
 | `dimension(H)` | `H::MatrixFreeHamiltonian` | `UInt64` | Returns total matrix dimension of `H`. |
@@ -438,4 +442,32 @@ For optimal cache locality and NUMA performance on modern multi-core processors:
 export OMP_PROC_BIND=spread
 export OMP_PLACES=threads
 ```
+
+### 6.5 Hardware & Device Query API
+
+`QuantumKrylov.jl` provides runtime utilities to query hardware acceleration and manage execution targets:
+
+```julia
+using QuantumKrylov
+
+# 1. Check if backend was compiled with GPU acceleration (CUDA, HIP, SYCL)
+is_gpu = is_gpu_build() # Returns Bool (false on CPU-only build)
+
+# 2. Query compiled GPU backend name
+backend = find_gpu()    # "cuda", "hip", "sycl", or nothing
+
+# 3. Query physical GPU device count detected on host
+num_gpus = gpu_count()  # Returns Int
+
+# 4. Explicitly initialize Kokkos execution spaces for a targeted device
+initialize_device!("cpu")
+```
+
+| Function | Arguments | Return Type | Description |
+| :--- | :--- | :--- | :--- |
+| `is_gpu_build()` | None | `Bool` | Returns `true` if compiled with GPU acceleration, `false` otherwise. |
+| `find_gpu()` | None | `Union{String, Nothing}` | Returns the active GPU backend name, or `nothing` for CPU builds. |
+| `gpu_count()` | None | `Int` | Returns the number of physical GPUs detected on the system. |
+| `initialize_device!(device)` | `device::AbstractString="cpu"` | `Nothing` | Explicitly initializes Kokkos execution spaces for `device`. |
+
 

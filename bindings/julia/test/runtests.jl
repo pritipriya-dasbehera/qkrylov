@@ -253,4 +253,66 @@ using QuantumKrylov
         @test isapprox(ftlm_res.beta, 1.0)
         @test ftlm_res.partition_function > 0.0
     end
+
+    @testset "Device & Hardware Query API" begin
+        gpu_build = is_gpu_build()
+        @test isa(gpu_build, Bool)
+        @test gpu_build == false # Testing on CPU environment
+
+        gpu_name = find_gpu()
+        @test gpu_name === nothing
+
+        gpus = gpu_count()
+        @test isa(gpus, Int)
+        @test gpus == 0
+
+        @test initialize_device!("cpu") === nothing
+
+        # Device keyword in Hamiltonian
+        basis = SpinHalfBasis(2)
+        op = OpSum()
+        op += 1.0 * Sz(0) * Sz(1)
+
+        H_cpu = MatrixFreeHamiltonian(basis, op; device="cpu")
+        @test dimension(H_cpu) == 4
+        @test H_cpu.device == "cpu"
+
+        # Requesting GPU on CPU build throws an informative ArgumentError
+        @test_throws ArgumentError MatrixFreeHamiltonian(basis, op; device="cuda")
+        @test_throws ArgumentError MatrixFreeHamiltonian(basis, op; device="gpu")
+    end
+
+    @testset "Hubbard & Boson Operator Generators" begin
+        op_hub = OpSum()
+        op_hub += 1.0 * CdagUp(0) * CUp(1) + 1.0 * CdagDn(0) * CDn(1)
+        op_hub += 2.0 * Nup(0) + 2.0 * Ndn(0) + 4.0 * Nupdn(0)
+        @test length(op_hub) == 5
+
+        op_boson = OpSum()
+        op_boson += 1.0 * Bdag(0) * B(1) + 0.5 * N(0)
+        @test length(op_boson) == 2
+    end
+
+    @testset "Keyword Basis Constructors" begin
+        # SpinHalfBasis keyword constructor
+        b_sz = SpinHalfBasis(4; sz=0)
+        @test dimension(b_sz) == 6
+        @test nsites(b_sz) == 4
+
+        b_unconstrained = SpinHalfBasis(4; sz=nothing)
+        @test dimension(b_unconstrained) == 16
+
+        # FermionBasis keyword constructor
+        b_n = FermionBasis(4; n=2)
+        @test dimension(b_n) == 6
+
+        # HubbardBasis keyword constructor
+        b_hub = HubbardBasis(2; nup=1, ndn=1)
+        @test dimension(b_hub) == 4 # 2 choose 1 up * 2 choose 1 down = 4
+
+        # TJBasis keyword constructor
+        b_tj = TJBasis(2; nup=1, ndn=1)
+        @test dimension(b_tj) == 2
+    end
 end
+
