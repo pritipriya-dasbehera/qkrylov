@@ -22,12 +22,21 @@ mutable struct MatrixFreeHamiltonian
             end
         end
 
-        ptr = ccall(
-            (:qkrylov_hamiltonian_create_device, libqkrylov),
-            Ptr{Cvoid},
-            (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring),
-            basis.ptr, site.ptr, opsum.ptr, device
-        )
+        ptr = if _has_symbol(:qkrylov_hamiltonian_create_device)
+            ccall(
+                (:qkrylov_hamiltonian_create_device, libqkrylov),
+                Ptr{Cvoid},
+                (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring),
+                basis.ptr, site.ptr, opsum.ptr, device
+            )
+        else
+            ccall(
+                (:qkrylov_hamiltonian_create, libqkrylov),
+                Ptr{Cvoid},
+                (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+                basis.ptr, site.ptr, opsum.ptr
+            )
+        end
         ptr == C_NULL && error("Failed to create MatrixFreeHamiltonian on device: $device")
         
         obj = new(ptr, basis, site, opsum, String(device))
