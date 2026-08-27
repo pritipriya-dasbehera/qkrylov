@@ -372,14 +372,50 @@ int qkrylov_opsum_add_term_nbody(qkrylov_opsum_h opsum, float coeff_real, float 
     }
 }
 
+/* Device & Hardware Query API */
+int qkrylov_is_gpu_build(void) {
+    return Device::is_gpu_build() ? 1 : 0;
+}
+
+const char* qkrylov_find_gpu(void) {
+    if (Device::is_gpu_build()) {
+        static std::string backend = Device::backend_name();
+        return backend.c_str();
+    }
+    return nullptr;
+}
+
+int qkrylov_gpu_count(void) {
+    return Device::gpu_count();
+}
+
+int qkrylov_initialize_device(const char* device_str) {
+    try {
+        detail::initialize_kokkos(Device(device_str ? device_str : "cpu"));
+        return QKRYLOV_SUCCESS;
+    } catch (...) {
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
 /* MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace> API */
 qkrylov_hamiltonian_h qkrylov_hamiltonian_create(qkrylov_basis_h basis,
                                                 qkrylov_site_h site,
                                                 qkrylov_opsum_h opsum) {
+    return qkrylov_hamiltonian_create_device(basis, site, opsum, "cpu");
+}
+
+qkrylov_hamiltonian_h qkrylov_hamiltonian_create_device(qkrylov_basis_h basis,
+                                                        qkrylov_site_h site,
+                                                        qkrylov_opsum_h opsum,
+                                                        const char* device_str) {
     if (!basis || !basis->ptr || !site || !site->ptr || !opsum) return nullptr;
     try {
+        std::string dev_str = device_str ? device_str : "cpu";
         auto handle = std::make_unique<qkrylov_hamiltonian_t>();
-        handle->ptr = std::make_unique<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>>(basis->ptr, site->ptr, opsum->opsum, Device());
+        handle->ptr = std::make_unique<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>>(
+            basis->ptr, site->ptr, opsum->opsum, Device(dev_str)
+        );
         return handle.release();
     } catch (...) {
         return nullptr;

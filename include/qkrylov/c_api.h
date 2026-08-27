@@ -76,11 +76,23 @@ int              qkrylov_opsum_add_term_nbody(qkrylov_opsum_h opsum, float coeff
                                              int n_factors, const char** ops, const int* sites);
 
 /* -----------------------------------------------------------------------------
+ * Device & Hardware Query API
+ * ----------------------------------------------------------------------------- */
+int         qkrylov_is_gpu_build(void);
+const char* qkrylov_find_gpu(void);
+int         qkrylov_gpu_count(void);
+int         qkrylov_initialize_device(const char* device_str);
+
+/* -----------------------------------------------------------------------------
  * Matrix-Free Hamiltonian API
  * ----------------------------------------------------------------------------- */
 qkrylov_hamiltonian_h qkrylov_hamiltonian_create(qkrylov_basis_h basis,
                                                 qkrylov_site_h site,
                                                 qkrylov_opsum_h opsum);
+qkrylov_hamiltonian_h qkrylov_hamiltonian_create_device(qkrylov_basis_h basis,
+                                                        qkrylov_site_h site,
+                                                        qkrylov_opsum_h opsum,
+                                                        const char* device_str);
 void                  qkrylov_hamiltonian_destroy(qkrylov_hamiltonian_h h);
 uint64_t              qkrylov_hamiltonian_dimension(qkrylov_hamiltonian_h h);
 

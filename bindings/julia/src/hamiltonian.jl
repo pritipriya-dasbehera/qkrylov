@@ -5,19 +5,32 @@ mutable struct MatrixFreeHamiltonian
     basis::AbstractBasis
     site::AbstractSite
     opsum::OpSum
+    device::String
 
-    function MatrixFreeHamiltonian(basis::AbstractBasis, site::AbstractSite, opsum::OpSum)
+    function MatrixFreeHamiltonian(
+        basis::AbstractBasis,
+        site::AbstractSite,
+        opsum::OpSum;
+        device::AbstractString="cpu"
+    )
         validate!(opsum, nsites(basis))
 
+        d_lower = lowercase(device)
+        if occursin("cuda", d_lower) || occursin("hip", d_lower) || occursin("sycl", d_lower) || d_lower == "gpu"
+            if !is_gpu_build()
+                throw(ArgumentError("QKrylov was not built with GPU support. Install/compile a GPU build of libqkrylov with Kokkos CUDA/HIP enabled."))
+            end
+        end
+
         ptr = ccall(
-            (:qkrylov_hamiltonian_create, libqkrylov),
+            (:qkrylov_hamiltonian_create_device, libqkrylov),
             Ptr{Cvoid},
-            (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
-            basis.ptr, site.ptr, opsum.ptr
+            (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring),
+            basis.ptr, site.ptr, opsum.ptr, device
         )
-        ptr == C_NULL && error("Failed to create MatrixFreeHamiltonian")
+        ptr == C_NULL && error("Failed to create MatrixFreeHamiltonian on device: $device")
         
-        obj = new(ptr, basis, site, opsum)
+        obj = new(ptr, basis, site, opsum, String(device))
         finalizer(obj) do o
             if o.ptr != C_NULL
                 ccall((:qkrylov_hamiltonian_destroy, libqkrylov), Cvoid, (Ptr{Cvoid},), o.ptr)
@@ -36,9 +49,9 @@ function default_site(b::AbstractBasis)
     error("Cannot automatically infer Site model for basis type $(typeof(b)). Please provide the site argument explicitly: MatrixFreeHamiltonian(basis, site, opsum)")
 end
 
-function MatrixFreeHamiltonian(basis::AbstractBasis, opsum::OpSum)
+function MatrixFreeHamiltonian(basis::AbstractBasis, opsum::OpSum; device::AbstractString="cpu")
     site = default_site(basis)
-    return MatrixFreeHamiltonian(basis, site, opsum)
+    return MatrixFreeHamiltonian(basis, site, opsum; device=device)
 end
 
 function dimension(H::MatrixFreeHamiltonian)::UInt64

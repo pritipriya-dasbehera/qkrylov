@@ -147,7 +147,7 @@ println("Convergence status:  ", res.converged)
 
 ## Documentation
 
-Comprehensive, but poorly written, Julia package documentation is available at:
-- **Core Concepts Guide**: [`bindings/julia/documentation.md`](bindings/julia/documentation.md)
-- **Julia Binding README**: [`bindings/julia/README.md`](bindings/julia/README.md)
+- **C API Reference (`extern "C"`)**: [`docs/api/c_api.md`](docs/api/c_api.md)
+- **Julia Core Concepts Guide**: [`bindings/julia/documentation.md`](bindings/julia/documentation.md)
+- **Julia Package README**: [`bindings/julia/README.md`](bindings/julia/README.md)
 

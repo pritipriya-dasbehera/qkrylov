@@ -57,10 +57,22 @@ int main() {
     assert(qkrylov_opsum_add_term_nbody(opsum_nbody, 0.1f, 0.0f, 3, ops3, sites3) == QKRYLOV_SUCCESS);
     qkrylov_opsum_destroy(opsum_nbody);
 
-    // 5. Test Hamiltonian API
+    // 5. Test Device & Hamiltonian API
+    int is_gpu = qkrylov_is_gpu_build();
+    int gpus = qkrylov_gpu_count();
+    const char* gpu_backend = qkrylov_find_gpu();
+    std::cout << "Device check: is_gpu=" << is_gpu << ", gpu_count=" << gpus
+              << ", backend=" << (gpu_backend ? gpu_backend : "none") << std::endl;
+    assert(qkrylov_initialize_device("cpu") == QKRYLOV_SUCCESS);
+
     qkrylov_hamiltonian_h H = qkrylov_hamiltonian_create(basis, site, opsum);
     assert(H != NULL);
     assert(qkrylov_hamiltonian_dimension(H) == dim);
+
+    qkrylov_hamiltonian_h H_dev = qkrylov_hamiltonian_create_device(basis, site, opsum, "cpu");
+    assert(H_dev != NULL);
+    assert(qkrylov_hamiltonian_dimension(H_dev) == dim);
+    qkrylov_hamiltonian_destroy(H_dev);
 
     // 6. Test Matrix-Vector Apply
     std::vector<float> x_real(dim, 1.0);
