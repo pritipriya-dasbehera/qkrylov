@@ -94,15 +94,32 @@ end
 # Operator Term Arithmetic & Generator Functions (Sz, Sp, Sm, Sx, Sy, n, c, cdag)
 # -----------------------------------------------------------------------------
 
-# Site Operator Generators
+# Spin-1/2 Site Operator Generators
 Sz(site::Integer)   = OpTerm(1.0, [("Sz", Int(site))])
 Sp(site::Integer)   = OpTerm(1.0, [("Sp", Int(site))])
 Sm(site::Integer)   = OpTerm(1.0, [("Sm", Int(site))])
 Sx(site::Integer)   = OpTerm(1.0, [("Sx", Int(site))])
 Sy(site::Integer)   = OpTerm(1.0, [("Sy", Int(site))])
-n(site::Integer)    = OpTerm(1.0, [("n",  Int(site))])
-c(site::Integer)    = OpTerm(1.0, [("c",  Int(site))])
+
+# Spinless Fermion Operator Generators
+n(site::Integer)    = OpTerm(1.0, [("n",    Int(site))])
+c(site::Integer)    = OpTerm(1.0, [("c",    Int(site))])
 cdag(site::Integer) = OpTerm(1.0, [("cdag", Int(site))])
+
+# Hubbard / Spinful Electron Operator Generators
+CdagUp(site::Integer) = OpTerm(1.0, [("CdagUp", Int(site))])
+CUp(site::Integer)    = OpTerm(1.0, [("CUp",    Int(site))])
+CdagDn(site::Integer) = OpTerm(1.0, [("CdagDn", Int(site))])
+CDn(site::Integer)    = OpTerm(1.0, [("CDn",    Int(site))])
+Nup(site::Integer)    = OpTerm(1.0, [("Nup",    Int(site))])
+Ndn(site::Integer)    = OpTerm(1.0, [("Ndn",    Int(site))])
+Nupdn(site::Integer)  = OpTerm(1.0, [("Nupdn",  Int(site))])
+
+# Boson Operator Generators
+Bdag(site::Integer)   = OpTerm(1.0, [("Bdag",   Int(site))])
+B(site::Integer)      = OpTerm(1.0, [("B",      Int(site))])
+N(site::Integer)      = OpTerm(1.0, [("N",      Int(site))])
+
 
 # Scaling (*)
 Base.:*(a::Number, t::OpTerm) = OpTerm(ComplexF64(a) * t.coeff, t.factors)

@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, julia-release ]
     paths:
       - 'src/**'
       - 'include/**'
@@ -11,7 +11,7 @@ on:
       - 'CMakeLists.txt'
       - '.github/workflows/tests.yaml'
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, julia-release ]
   workflow_dispatch:
 
 jobs:
@@ -65,6 +65,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Build C++ library
+      run: |
+        cmake -B build -S . -DQKRYLOV_BUILD_TESTS=OFF -DQKRYLOV_BUILD_PYTHON=OFF
+        cmake --build build --config Release
+
     - name: Set up Julia ${{ matrix.julia-version }}
       uses: julia-actions/setup-julia@v2
       with:
@@ -72,6 +77,7 @@ jobs:
 
     - name: Run Julia tests
       run: |
+        export QKRYLOV_LIB_PATH="${GITHUB_WORKSPACE}/build/libqkrylov.so"
         julia --project=bindings/julia -e 'using Pkg; Pkg.test()'
 
 
