@@ -88,6 +88,8 @@ op = OpSum()
 N = 4
 for i in 0:(N - 1)
     next_i = mod(i + 1, N)
+    # Note: `global` is needed when running as a top-level script, but can be
+    # omitted if this loop is inside a function or run directly in the REPL.
     global op += 1.0 * Sz(i) * Sz(next_i) + 0.5 * (Sp(i) * Sm(next_i) + Sm(i) * Sp(next_i))
 end
 
