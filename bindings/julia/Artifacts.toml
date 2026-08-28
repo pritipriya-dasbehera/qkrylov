@@ -2,36 +2,47 @@
 
 [[libqkrylov]]
 arch = "aarch64"
-git-tree-sha1 = "07876a4ade943d3abc994bad1b779e82266c82b6"
+git-tree-sha1 = "7a50b5b8415ee21d3495b5ad76456e5ada134e7f"
 os = "macos"
 
     [[libqkrylov.download]]
-    sha256 = "5aa97d249509c54237e38b8bc95187650f8a641a971ba2b061c4dbeb02c0476a"
-    url = "https://github.com/sjp95/qkrylov/releases/download/latest-binaries/qkrylov-aarch64-apple-darwin.tar.gz"
+    sha256 = "9b302421cc0fd1643c5e6809e8ebf234bc518ac744cea8d3863a26e08058b1bf"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-aarch64-apple-darwin.tar.gz"
 
 [[libqkrylov]]
 arch = "aarch64"
-git-tree-sha1 = "f9198bc82d47239ebc3920188f017d8cc5465ecb"
+git-tree-sha1 = "5e9380d6aaca461077ea945e84941bed5663bb7a"
 os = "linux"
 
     [[libqkrylov.download]]
-    sha256 = "aedc9f89500f134bac810f47f828b1357175f93146f2d3c97ba05e78457ce032"
-    url = "https://github.com/sjp95/qkrylov/releases/download/latest-binaries/qkrylov-aarch64-linux-gnu.tar.gz"
+    sha256 = "5ebccfea4f8cb1bb0617a44208fd8606d330ecc165ca68b1fba37c22d20ff164"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-aarch64-linux-gnu.tar.gz"
 
 [[libqkrylov]]
 arch = "x86_64"
-git-tree-sha1 = "10cf755f2e4e5b453f345301859ea8d68cf87018"
+cuda = "12.0"
+git-tree-sha1 = "843d9d42fffa0ca391c2564ea3606e314e4c9073"
 os = "linux"
 
     [[libqkrylov.download]]
-    sha256 = "6e369e93d1cee83d59a8d02f13c88c1a2c8073181d80984fd70d1397e91538ad"
-    url = "https://github.com/sjp95/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-linux-gnu.tar.gz"
+    sha256 = "f88f995435acc0c5aeacce9dc0d310fc80e67634e4f411c2eb817215b7b898e6"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-linux-gnu-cuda12.tar.gz"
 
 [[libqkrylov]]
 arch = "x86_64"
-git-tree-sha1 = "47190e655bac54e4b924aeebb643654820bd95c3"
+cuda = "none"
+git-tree-sha1 = "63bd10950314e3d36e7ad87787bc97f5f721eada"
+os = "linux"
+
+    [[libqkrylov.download]]
+    sha256 = "2d807c3286f37c85e6fa0cfd9db3b7a8d3ecddbb44ba7360f7bf84bd0b862a99"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-linux-gnu.tar.gz"
+
+[[libqkrylov]]
+arch = "x86_64"
+git-tree-sha1 = "79c70b64c5b06bf816ebeb35364a3cd33d82e235"
 os = "windows"
 
     [[libqkrylov.download]]
-    sha256 = "ea04781b29c9e619e57b035a983a0e9daa3eb9f54ab191bcf6943be769356a9b"
-    url = "https://github.com/sjp95/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-w64-mingw32.tar.gz"
+    sha256 = "0f01762f6d9f0ef503c342a6b612c1f7d0bcaee452ebff0548d31965ef9e981b"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-w64-mingw32.tar.gz"
