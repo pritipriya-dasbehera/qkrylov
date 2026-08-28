@@ -63,7 +63,8 @@ function find_libqkrylov()
                 hash = Base.SHA1(meta["git-tree-sha1"])
                 if !Artifacts.artifact_exists(hash)
                     try
-                        Pkg.Artifacts.ensure_artifact_installed("libqkrylov", artifacts_file; platform=platform)
+                        pkg_mod = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
+                        Base.invokelatest(getfield(getfield(pkg_mod, :Artifacts), :ensure_artifact_installed), "libqkrylov", artifacts_file; platform=platform)
                     catch
                     end
                 end
