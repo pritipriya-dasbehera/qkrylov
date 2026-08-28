@@ -114,7 +114,6 @@ jobs:
 
           cmake -B build -S . \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
             -DQKRYLOV_BUILD_TESTS=OFF \
             -DQKRYLOV_BUILD_EXAMPLES=OFF \
             -DQKRYLOV_BUILD_PYTHON=OFF \
