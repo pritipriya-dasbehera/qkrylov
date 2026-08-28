@@ -130,10 +130,10 @@ is_present = st0 in basis_sec # Returns true
 
 | Basis Constructor | Parameters | Default Values | Description |
 | :--- | :--- | :--- | :--- |
-| `SpinHalfBasis(num_sites, sector)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}` | `num_sites`: Required<br>`sector`: `nothing` | Spin-1/2 basis on `num_sites` sites. Default `sector=nothing` creates full $2^N$ basis. |
-| `FermionBasis(num_sites, sector)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}` | `num_sites`: Required<br>`sector`: `nothing` | Spinless fermion basis on `num_sites` sites. Default `sector=nothing` creates full $2^N$ basis. |
-| `HubbardBasis(num_sites, sector)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}` | `num_sites`: Required<br>`sector`: `nothing` | Fermi-Hubbard basis on `num_sites` sites. Default `sector=nothing` creates full $4^N$ basis. |
-| `TJBasis(num_sites, sector)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}` | `num_sites`: Required<br>`sector`: `nothing` | $t$-$J$ model basis on `num_sites` sites. Default `sector=nothing` creates full $3^N$ basis. |
+| `SpinHalfBasis(num_sites, sector=nothing; sz=nothing)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}`<br>`sz::Union{Real, Nothing}` | `num_sites`: Required<br>`sector`: `nothing`<br>`sz`: `nothing` | Spin-1/2 basis on `num_sites` sites. Passing `sz=0` automatically builds total $S_z=0$ sector. |
+| `FermionBasis(num_sites, sector=nothing; n=nothing)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}`<br>`n::Union{Integer, Nothing}` | `num_sites`: Required<br>`sector`: `nothing`<br>`n`: `nothing` | Spinless fermion basis on `num_sites` sites. Passing `n=2` restricts to 2-particle sector. |
+| `HubbardBasis(num_sites, sector=nothing; nup=nothing, ndn=nothing)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}`<br>`nup, ndn::Union{Integer, Nothing}` | `num_sites`: Required<br>`sector`: `nothing`<br>`nup, ndn`: `nothing` | Fermi-Hubbard basis on `num_sites` sites with optional electron number conservation. |
+| `TJBasis(num_sites, sector=nothing; nup=nothing, ndn=nothing)` | `num_sites::Integer`<br>`sector::Union{Sector, Nothing}`<br>`nup, ndn::Union{Integer, Nothing}` | `num_sites`: Required<br>`sector`: `nothing`<br>`nup, ndn`: `nothing` | $t$-$J$ model basis on `num_sites` sites with optional electron number conservation. |
 
 ### Basis Operations & Query Functions
 
@@ -199,6 +199,10 @@ clear!(op)
 | `Sx(site)`, `Sy(site)` | `site::Integer` | Spin-1/2 operators ($S^x, S^y$) at 0-indexed `site`. |
 | `n(site)` | `site::Integer` | Particle number operator ($n_i$) at 0-indexed `site`. |
 | `c(site)`, `cdag(site)` | `site::Integer` | Fermionic annihilation ($c_i$) and creation ($c_i^\dagger$) operators at 0-indexed `site`. |
+| `CdagUp(site)`, `CUp(site)` | `site::Integer` | Spin-up electron creation ($c_{i,\uparrow}^\dagger$) and annihilation ($c_{i,\uparrow}$) operators. |
+| `CdagDn(site)`, `CDn(site)` | `site::Integer` | Spin-down electron creation ($c_{i,\downarrow}^\dagger$) and annihilation ($c_{i,\downarrow}$) operators. |
+| `Nup(site)`, `Ndn(site)`, `Nupdn(site)` | `site::Integer` | Electron number operators ($n_{i,\uparrow}, n_{i,\downarrow}, n_{i,\uparrow} n_{i,\downarrow}$). |
+| `Bdag(site)`, `B(site)`, `N(site)` | `site::Integer` | Boson creation ($b_i^\dagger$), annihilation ($b_i$), and number ($n_i$) operators. |
 | `coeff * term * ...` | `coeff::Number`, `term::OpTerm` | Multiplies operator factors and scales coupling coefficient. |
 | `term1 + term2` | `term1`, `term2` | Combines operator terms into an `OpExpr` term collection. |
 | `op += expr` | `op::OpSum`, `expr::OpExpr` | Appends operator terms into `OpSum`. |
@@ -233,14 +237,17 @@ op    = OpSum()
 add_term!(op, 1.0, "Sz", 0, "Sz", 1)
 
 # 2. Construct MatrixFreeHamiltonian (site is automatically inferred from basis)
-H = MatrixFreeHamiltonian(basis, op)
+# Automatically targets GPU if available ("cuda:0", "cuda"), otherwise falls back to CPU
+target_dev = is_gpu_build() ? "cuda:0" : "cpu"
+H = MatrixFreeHamiltonian(basis, op; device=target_dev)
 println(H) # Outputs: MatrixFreeHamiltonian(dim = 16, basis = SpinHalfBasis(sites = 4, dim = 16))
 
-# Alternatively, explicitly specify the site model:
+# Alternatively, explicitly specify the site model and execution target:
 site = SpinHalfSite()
-H_explicit = MatrixFreeHamiltonian(basis, site, op)
+H_explicit = MatrixFreeHamiltonian(basis, site, op; device="cpu")
 
 # 3. Perform matrix-vector multiplication (y = H * x)
+# Evaluated on the target device (Kokkos OpenMP on CPU, or CUDA on GPU)
 x = zeros(ComplexF64, dimension(H))
 x[1] = 1.0 + 0.0im
 y = H * x # Vector{ComplexF64} of length dimension(H)
@@ -257,9 +264,9 @@ sz  = size(H)      # (16, 16)
 
 | Function / Syntax | Arguments | Return Type | Description |
 | :--- | :--- | :--- | :--- |
-| `MatrixFreeHamiltonian(basis, opsum)` | `basis::AbstractBasis`<br>`opsum::OpSum` | `MatrixFreeHamiltonian` | **Convenience Constructor**. Automatically infers the matching default `Site` model (`SpinHalfSite`, `FermionSite`, `HubbardSite`, or `TJSite`) from the basis type. |
-| `MatrixFreeHamiltonian(basis, site, opsum)` | `basis::AbstractBasis`<br>`site::AbstractSite`<br>`opsum::OpSum` | `MatrixFreeHamiltonian` | **Explicit Constructor**. Constructs a matrix-free Hamiltonian operator with a specified site model. |
-| `H * x` | `H::MatrixFreeHamiltonian`<br>`x::AbstractVector{<:Number}` | `Vector{ComplexF64}` | Performs zero-copy matrix-vector multiplication $y = H \cdot x$. Length of `x` must equal `dimension(H)`. |
+| `MatrixFreeHamiltonian(basis, opsum; device="cpu")` | `basis::AbstractBasis`<br>`opsum::OpSum`<br>`device::AbstractString="cpu"` | `MatrixFreeHamiltonian` | **Convenience Constructor**. Automatically infers the matching default `Site` model (`SpinHalfSite`, `FermionSite`, `HubbardSite`, or `TJSite`) from the basis type. Targets specified execution `device` (`"cpu"`, `"cuda:0"`, `"hip"`, etc.). |
+| `MatrixFreeHamiltonian(basis, site, opsum; device="cpu")` | `basis::AbstractBasis`<br>`site::AbstractSite`<br>`opsum::OpSum`<br>`device::AbstractString="cpu"` | `MatrixFreeHamiltonian` | **Explicit Constructor**. Constructs a matrix-free Hamiltonian operator with a specified site model on target `device`. |
+| `H * x` | `H::MatrixFreeHamiltonian`<br>`x::AbstractVector{<:Number}` | `Vector{ComplexF64}` | Performs zero-copy matrix-vector multiplication $y = H \cdot x$ on target device. Length of `x` must equal `dimension(H)`. |
 | `diagonal(H)` | `H::MatrixFreeHamiltonian` | `Vector{Float64}` | Computes and returns matrix-free diagonal elements $H_{ii}$. |
 | `dimension(H)` | `H::MatrixFreeHamiltonian` | `UInt64` | Returns total matrix dimension of `H`. |
 | `size(H)` | `H::MatrixFreeHamiltonian` | `(Int, Int)` | Returns `(dim, dim)` matrix shape tuple. |
@@ -268,12 +275,15 @@ sz  = size(H)      # (16, 16)
 
 ## 5. Krylov & Lanczos Solvers
 
+> **Hardware Acceleration (CPU & GPU)**:
+> All solvers below inherit the execution space of the supplied `MatrixFreeHamiltonian`. If `H` was created with `device="cuda:0"`, all matrix-vector multiplications ($y = H \cdot x$), Krylov projection steps, and vector updates execute entirely on the GPU via Kokkos CUDA kernels without host-device transfer bottlenecks.
+
 ### 5.1 Ground State Solver (`lanczos_ground_state`)
 
 #### How to use `lanczos_ground_state`
 
 ```julia
-# 1. Energy-only calculation (fast memory-efficient path)
+# 1. Energy-only calculation (runs on H's target device: CPU or GPU)
 res = lanczos_ground_state(H, maxiter=200, tol=1e-12)
 println(res)            # Outputs: LanczosResult(energy = -2.0, iterations = 14, converged = true)
 E0 = res.energy          # Ground state energy Float64
@@ -391,3 +401,134 @@ Cv = ftlm_res.specific_heat      # Specific heat Cv(beta)
 | `res.partition_function` | `Float64` | - | Partition function $Z(\beta)$. |
 | `res.internal_energy` | `Float64` | - | Internal energy $E(\beta)$. |
 | `res.specific_heat` | `Float64` | - | Specific heat $C_v(\beta)$. |
+
+---
+
+## 6. Multithreading & Hardware Resource Control
+
+`QuantumKrylov.jl` wraps a high-performance C++ engine accelerated by **Kokkos OpenMP** parallelism.
+
+### 6.1 Julia Runtime Threads vs. OpenMP Backend Threads
+
+Julia thread management and native C++ OpenMP thread management operate as **independent thread pools**:
+
+- **Julia Task Threads (`julia -t N` / `Threads.nthreads()`)**: Governs concurrency inside Julia scripts (e.g. `Threads.@threads`, `Threads.@spawn`).
+- **OpenMP C++ Worker Threads (`OMP_NUM_THREADS=M`)**: Governs parallelism inside C++ kernels (matrix-free CSR apply $y = H \cdot x$, parallel dot products, norms, and Krylov solver iterations).
+
+> **Important**: Starting Julia with `julia -t 1` only constrains Julia's internal thread count. If `OMP_NUM_THREADS` is unset, OpenMP will automatically spawn threads on **all available CPU cores** during matrix-free operations and Krylov iterations.
+
+### 6.2 Setting OpenMP Worker Count
+
+#### Terminal Launch
+```bash
+# Force single-core execution (1 Julia thread, 1 OpenMP thread)
+OMP_NUM_THREADS=1 julia -t 1
+
+# Multi-core C++ execution with single-threaded Julia driver
+OMP_NUM_THREADS=8 julia -t 1
+```
+
+#### Inside Julia Scripts
+```julia
+# Must be set before QuantumKrylov initializes the C++ backend
+ENV["OMP_NUM_THREADS"] = "4"
+using QuantumKrylov
+```
+
+### 6.3 Concurrency Patterns & Best Practices
+
+| Use Case | Recommended Settings | Rationale |
+| :--- | :--- | :--- |
+| **Large Matrix Solver** (Single calculation) | `OMP_NUM_THREADS=all_cores`<br>`julia -t 1` | Maximizes memory bandwidth and vector parallelism in Kokkos OpenMP kernels. |
+| **Parameter Sweeps / Parallel Search** | `OMP_NUM_THREADS=1`<br>`julia -t N` | Prevents CPU thread oversubscription and context-switching overhead from nested parallel loops. |
+
+### 6.4 OpenMP Environment Optimizations
+For optimal cache locality and NUMA performance on modern multi-core processors:
+```bash
+export OMP_PROC_BIND=spread
+export OMP_PLACES=threads
+```
+
+### 6.5 Hardware & Device Query API
+
+`QuantumKrylov.jl` provides runtime utilities to query hardware acceleration and manage execution targets:
+
+```julia
+using QuantumKrylov
+
+# 1. Check if backend was compiled with GPU acceleration (CUDA, HIP, SYCL)
+is_gpu = is_gpu_build() # Returns Bool (false on CPU-only build)
+
+# 2. Query compiled GPU backend name
+backend = find_gpu()    # "cuda", "hip", "sycl", or nothing
+
+# 3. Query physical GPU device count detected on host
+num_gpus = gpu_count()  # Returns Int
+
+# 4. Explicitly initialize Kokkos execution spaces for a targeted device
+initialize_device!("cpu")
+```
+
+| Function | Arguments | Return Type | Description |
+| :--- | :--- | :--- | :--- |
+| `is_gpu_build()` | None | `Bool` | Returns `true` if compiled with GPU acceleration, `false` otherwise. |
+| `find_gpu()` | None | `Union{String, Nothing}` | Returns the active GPU backend name, or `nothing` for CPU builds. |
+| `gpu_count()` | None | `Int` | Returns the number of physical GPUs detected on the system. |
+| `initialize_device!(device)` | `device::AbstractString="cpu"` | `Nothing` | Explicitly initializes Kokkos execution spaces for `device`. |
+
+### 6.6 Complete GPU Acceleration Workflow
+
+The following example demonstrates an end-to-end workflow querying hardware capabilities, targeting an NVIDIA GPU device, and running Lanczos, Davidson, and Dynamical response solvers:
+
+```julia
+using QuantumKrylov
+
+# 1. Hardware detection & device configuration
+if is_gpu_build()
+    backend = find_gpu()
+    n_gpus  = gpu_count()
+    println("Accelerated backend active: $backend with $n_gpus physical GPU(s)")
+
+    # Select target device (e.g. "cuda:0" for the first GPU)
+    target_device = "cuda:0"
+    initialize_device!(target_device)
+else
+    println("Running on CPU with OpenMP backend")
+    target_device = "cpu"
+end
+
+# 2. Setup symmetry sector and basis
+# 12-site spin-1/2 chain with Sz = 0 symmetry (Hilbert space dimension = 924)
+sec = Sector()
+set_sz!(sec, 0)
+basis = SpinHalfBasis(12, sec)
+
+# 3. Define Heisenberg Hamiltonian terms
+op = OpSum()
+for i in 0:10
+    # Note: `global` is needed when running as a top-level script
+    global op += 1.0 * Sz(i) * Sz(i + 1) + 0.5 * (Sp(i) * Sm(i + 1) + Sm(i) * Sp(i + 1))
+end
+
+# 4. Construct MatrixFreeHamiltonian on target device
+H = MatrixFreeHamiltonian(basis, op; device=target_device)
+println("Constructed Hamiltonian on: ", target_device, " (dimension = ", dimension(H), ")")
+
+# 5. Execute Solvers (All computations run directly on target device)
+# Ground state calculation:
+res_gs = lanczos_ground_state(H, return_state=true, tol=1e-12)
+println("Ground state energy: ", res_gs.energy)
+
+# Low-lying excited states using Davidson:
+res_dav = davidson_lowest(H, n_eig=3, tol=1e-8)
+println("Lowest 3 eigenvalues: ", res_dav.eigenvalues)
+
+# Dynamical spectral function calculation:
+v0 = H * res_gs.state
+cfr = continued_fraction_coeffs(H, v0, n_iter=50)
+I_omega = evaluate_spectral_function(cfr, 0.5, res_gs.energy, 0.05)
+println("Spectral function I(omega=0.5): ", I_omega)
+```
+
+
+

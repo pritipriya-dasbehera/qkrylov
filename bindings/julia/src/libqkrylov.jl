@@ -30,12 +30,41 @@ function find_libqkrylov()
     artifacts_file = joinpath(@__DIR__, "..", "Artifacts.toml")
     if isfile(artifacts_file)
         try
-            meta = Artifacts.artifact_meta("libqkrylov", artifacts_file)
+            # Augment platform for CUDA resolution (matching Yggdrasil CUDA.augment)
+            platform = deepcopy(Base.BinaryPlatforms.HostPlatform())
+            has_cuda = false
+            try
+                h = Libdl.dlopen("libcuda"; throw_error=false)
+                if h !== nothing
+                    sym = Libdl.dlsym(h, :cuDriverGetVersion; throw_error=false)
+                    if sym !== nothing
+                        ver = Ref{Cint}(0)
+                        ccall(sym, Cint, (Ptr{Cint},), ver)
+                        if div(ver[], 1000) >= 12
+                            platform["cuda"] = "12.0"
+                            has_cuda = true
+                        end
+                    end
+                end
+            catch
+            end
+            if !has_cuda && Sys.islinux() && Sys.ARCH === :x86_64
+                platform["cuda"] = "none"
+            end
+
+            meta = Artifacts.artifact_meta("libqkrylov", artifacts_file; platform=platform)
+            # If CUDA artifact not found or not built yet, fallback to CPU
+            if meta === nothing && has_cuda
+                platform["cuda"] = "none"
+                meta = Artifacts.artifact_meta("libqkrylov", artifacts_file; platform=platform)
+            end
+
             if meta !== nothing
                 hash = Base.SHA1(meta["git-tree-sha1"])
                 if !Artifacts.artifact_exists(hash)
                     try
-                        Pkg.Artifacts.ensure_artifact_installed("libqkrylov", artifacts_file)
+                        pkg_mod = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
+                        Base.invokelatest(getfield(getfield(pkg_mod, :Artifacts), :ensure_artifact_installed), "libqkrylov", artifacts_file; platform=platform)
                     catch
                     end
                 end

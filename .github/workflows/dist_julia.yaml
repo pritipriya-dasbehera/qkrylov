@@ -28,18 +28,27 @@ jobs:
             os: ubuntu-latest
             os_name: linux
             arch: x86_64
+            cuda: none
+          - platform: x86_64-linux-gnu-cuda12
+            os: ubuntu-22.04
+            os_name: linux
+            arch: x86_64
+            cuda: "12.0"
           - platform: aarch64-linux-gnu
             os: ubuntu-24.04-arm
             os_name: linux
             arch: aarch64
+            cuda: none
           - platform: aarch64-apple-darwin
             os: macos-14
             os_name: macos
             arch: aarch64
+            cuda: none
           - platform: x86_64-w64-mingw32
             os: windows-latest
             os_name: windows
             arch: x86_64
+            cuda: none
 
     steps:
       - name: Checkout repository
@@ -54,6 +63,39 @@ jobs:
           export HOMEBREW_NO_AUTO_UPDATE=1
           brew install libomp
 
+      - name: Setup CUDA Toolkit (Linux CUDA)
+        if: matrix.cuda != 'none'
+        shell: bash
+        run: |
+          if ! command -v nvcc &> /dev/null; then
+            echo "Installing NVIDIA CUDA repository keyring..."
+            wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+            sudo dpkg -i cuda-keyring_1.1-1_all.deb
+            sudo apt-get update -q
+            sudo apt-get install -y -q \
+              cuda-nvcc-12-6 \
+              cuda-cudart-dev-12-6 \
+              cuda-driver-dev-12-6 \
+              cuda-cccl-12-6
+
+            CUDA_HOME="/usr/local/cuda-12.6"
+            if [ ! -d "$CUDA_HOME" ]; then
+              CUDA_HOME=$(ls -d /usr/local/cuda-12* 2>/dev/null | sort -V | tail -n 1)
+            fi
+            if [ ! -d "$CUDA_HOME" ] && [ -d "/usr/local/cuda" ]; then
+              CUDA_HOME="/usr/local/cuda"
+            fi
+
+            echo "Found CUDA at ${CUDA_HOME}"
+            echo "CUDA_HOME=${CUDA_HOME}" >> "$GITHUB_ENV"
+            echo "${CUDA_HOME}/bin" >> "$GITHUB_PATH"
+            echo "LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+            if [ -d "${CUDA_HOME}/lib64/stubs" ] && [ ! -f "${CUDA_HOME}/lib64/libcuda.so" ]; then
+              sudo ln -sf "${CUDA_HOME}/lib64/stubs/libcuda.so" "${CUDA_HOME}/lib64/libcuda.so" || true
+            fi
+          fi
+
       - name: Configure and Build C++ Library
         shell: bash
         run: |
@@ -61,6 +103,13 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then
             OPENMP_PREFIX=$(brew --prefix libomp)
             EXTRA_FLAGS="-DOpenMP_ROOT=${OPENMP_PREFIX} -DCMAKE_PREFIX_PATH=${OPENMP_PREFIX}"
+          fi
+
+          if [ "${{ matrix.cuda }}" != "none" ]; then
+            CUDA_NVCC="${CUDA_HOME:-/usr/local/cuda-12.6}/bin/nvcc"
+            EXTRA_FLAGS="${EXTRA_FLAGS} -DKokkos_ENABLE_CUDA=ON -DCMAKE_CUDA_HOST_COMPILER=${CXX:-g++} -DCMAKE_CUDA_COMPILER=${CUDA_NVCC} -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined -DCMAKE_SHARED_LINKER_FLAGS=-Wl,--allow-shlib-undefined -DKokkos_ARCH_AMPERE80=ON"
+          else
+            EXTRA_FLAGS="${EXTRA_FLAGS} -DKokkos_ENABLE_CUDA=OFF"
           fi
 
           cmake -B build -S . \
@@ -109,6 +158,7 @@ jobs:
               "platform": "${{ matrix.platform }}",
               "os": "${{ matrix.os_name }}",
               "arch": "${{ matrix.arch }}",
+              "cuda": "${{ matrix.cuda }}",
               "tarball": tarball,
               "sha256": file_sha,
               "git_tree_sha1": tree_sha
@@ -174,11 +224,21 @@ jobs:
 
       - name: Generate Artifacts.toml
         shell: bash
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python -c '
-          import os, glob, json
+          import os, glob, json, subprocess
 
-          repo = os.environ.get("GITHUB_REPOSITORY", "sjp95/qkrylov")
+          # Dynamically detect repository name without hardcoding
+          repo = os.environ.get("GITHUB_REPOSITORY")
+          if not repo:
+              try:
+                  origin = subprocess.check_output(["git", "config", "--get", "remote.origin.url"]).decode().strip()
+                  repo = origin.split("github.com/")[-1].removesuffix(".git").removeprefix("git@github.com:")
+              except Exception:
+                  repo = "sjp95/qkrylov"
+
           tag = os.environ.get("TAG_NAME", "latest-binaries")
 
           meta_files = sorted(glob.glob("metadata-*.json"))
@@ -193,9 +253,15 @@ jobs:
                   tree_sha = d["git_tree_sha1"]
                   os_name = d["os"]
                   file_sha = d["sha256"]
+                  cuda = d.get("cuda")
                   url = f"https://github.com/{repo}/releases/download/{tag}/{tarball}"
+
                   out.write(f"\n[[libqkrylov]]\n")
                   out.write(f"arch = \"{arch}\"\n")
+                  if cuda and cuda != "none":
+                      out.write(f"cuda = \"{cuda}\"\n")
+                  elif os_name == "linux" and arch == "x86_64":
+                      out.write("cuda = \"none\"\n")
                   out.write(f"git-tree-sha1 = \"{tree_sha}\"\n")
                   out.write(f"os = \"{os_name}\"\n\n")
                   out.write(f"    [[libqkrylov.download]]\n")
@@ -212,7 +278,36 @@ jobs:
           git add bindings/julia/Artifacts.toml
           if ! git diff --staged --quiet; then
             git commit -m "Update Artifacts.toml for ${TAG_NAME} [skip ci]"
+            git pull --rebase origin julia-release || true
             git push origin julia-release
           else
             echo "Artifacts.toml is already up-to-date."
           fi
+
+  test-released-artifacts:
+    name: Test Released Artifacts (${{ matrix.os }})
+    needs: publish-and-update-artifacts
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-14
+          - os: windows-latest
+    steps:
+      - name: Checkout julia-release branch
+        uses: actions/checkout@v4
+        with:
+          ref: julia-release
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+
+      - name: Test Julia package with downloaded Artifacts
+        shell: bash
+        run: |
+          julia --project=bindings/julia -e 'using Pkg; Pkg.test()'
+

@@ -16,8 +16,9 @@ It enables seamless zero-copy interop with languages such as **C**, **Julia (`cc
    - [Basis API](#2-basis-api)
    - [Site API](#3-site-api)
    - [OpSum API](#4-opsum-api)
-   - [Matrix-Free Hamiltonian API](#5-matrix-free-hamiltonian-api)
-   - [Solvers API](#6-solvers-api)
+   - [Device & Hardware Query API](#5-device--hardware-query-api)
+   - [Matrix-Free Hamiltonian API](#6-matrix-free-hamiltonian-api)
+   - [Solvers API](#7-solvers-api)
 6. [Complete C Example](#complete-c-example)
 
 ---
@@ -242,7 +243,36 @@ Adds an arbitrary $N$-body operator interaction term (e.g. 3-body chiral term $S
 
 ---
 
-### 5. Matrix-Free Hamiltonian API
+### 5. Device & Hardware Query API
+Inspects compiled hardware acceleration backends and configures execution targets.
+
+#### `qkrylov_is_gpu_build`
+```c
+int qkrylov_is_gpu_build(void);
+```
+Returns `1` if the shared library was compiled with GPU acceleration (CUDA, HIP, or SYCL), or `0` for a CPU-only build.
+
+#### `qkrylov_find_gpu`
+```c
+const char* qkrylov_find_gpu(void);
+```
+Returns a string identifying the active GPU backend (`"cuda"`, `"hip"`, `"sycl"`), or `NULL` if the binary was built for CPU only.
+
+#### `qkrylov_gpu_count`
+```c
+int qkrylov_gpu_count(void);
+```
+Returns the number of available physical GPUs detected on the host system.
+
+#### `qkrylov_initialize_device`
+```c
+int qkrylov_initialize_device(const char* device_str);
+```
+Explicitly initializes the Kokkos execution spaces for a targeted device (e.g. `"cpu"`, `"cuda:0"`, `"hip:1"`). Returns `QKRYLOV_SUCCESS` on success.
+
+---
+
+### 6. Matrix-Free Hamiltonian API
 Evaluates matrix-vector multiplication $y = Hx$ without storing the matrix.
 
 #### `qkrylov_hamiltonian_create`
@@ -251,7 +281,16 @@ qkrylov_hamiltonian_h qkrylov_hamiltonian_create(qkrylov_basis_h basis,
                                                 qkrylov_site_h site,
                                                 qkrylov_opsum_h opsum);
 ```
-Creates a `MatrixFreeHamiltonian` evaluator handle combining a basis, site operator rules, and operator sum terms.
+Creates a `MatrixFreeHamiltonian` evaluator handle on the default CPU device combining a basis, site operator rules, and operator sum terms.
+
+#### `qkrylov_hamiltonian_create_device`
+```c
+qkrylov_hamiltonian_h qkrylov_hamiltonian_create_device(qkrylov_basis_h basis,
+                                                        qkrylov_site_h site,
+                                                        qkrylov_opsum_h opsum,
+                                                        const char* device_str);
+```
+Creates a `MatrixFreeHamiltonian` evaluator targeted to a specific device (e.g. `"cpu"`, `"cuda:0"`, `"hip"`, `"gpu"`). Returns `NULL` if construction fails.
 
 #### `qkrylov_hamiltonian_destroy`
 ```c
@@ -289,12 +328,14 @@ Extracts the matrix-free diagonal elements $H_{ii}$ into `diag_out` (caller-allo
 
 ---
 
-### 6. Solvers API
+### 7. Solvers API
 
 #### `qkrylov_lanczos_ground_state` & `qkrylov_lanczos_ground_state_complex`
 ```c
 typedef struct {
     float energy;
+    int iterations;
+    int converged;
 } qkrylov_lanczos_result_c_t;
 
 int qkrylov_lanczos_ground_state(qkrylov_hamiltonian_h h,

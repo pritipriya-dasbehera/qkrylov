@@ -20,6 +20,7 @@ The Julia interface is constructed directly on top of the binary-stable C ABI ex
     - [Davidson Eigensolver (`davidson_lowest`)](#davidson-eigensolver-davidson_lowest)
     - [Continued-Fraction Dynamics & Spectral Functions](#continued-fraction-dynamics--spectral-functions)
     - [Finite Temperature Lanczos (`ftlm`)](#finite-temperature-lanczos-ftlm)
+- [Multithreading & CPU Core Management](#multithreading--cpu-core-management)
 - [Memory Safety & Architecture](#memory-safety--architecture)
 - [Running Unit Tests](#running-unit-tests)
 
@@ -29,7 +30,7 @@ The Julia interface is constructed directly on top of the binary-stable C ABI ex
 
 ### Option 1: Direct GitHub Installation for latest release (Prebuilt Binaries)
 
-You can install `QuantumKrylov.jl` directly from the `julia-release` branch. Julia's built-in **Artifacts** system automatically downloads and configures the native prebuilt binary (`libqkrylov.so`, `libqkrylov.dylib`, or `qkrylov.dll`) for your operating system and CPU architecture:
+You can install `QuantumKrylov.jl` directly from the `julia-release` branch. Julia's built-in **Artifacts** system automatically downloads and configures the native prebuilt binary (`libqkrylov.so`, `libqkrylov.dylib`, or `qkrylov.dll`) for your operating system and CPU architecture. On Linux systems with an NVIDIA GPU and driver 12+, it automatically downloads the **CUDA 12 accelerated** binary:
 
 In the Julia REPL (press `]` to open Pkg mode):
 ```julia
@@ -65,7 +66,7 @@ using QuantumKrylov
 
 ## Quickstart Example
 
-Here is a complete example constructing a 4-site spin-1/2 Heisenberg chain, computing its ground state energy and wavefunction, and running the Davidson solver for low-lying excited states:
+Here is a complete example constructing a 4-site spin-1/2 Heisenberg chain, computing its ground state energy and wavefunction, and running the Davidson solver for low-lying excited states (with automatic GPU acceleration when available):
 
 ```julia
 using QuantumKrylov
@@ -87,11 +88,16 @@ op = OpSum()
 N = 4
 for i in 0:(N - 1)
     next_i = mod(i + 1, N)
-    op += 1.0 * Sz(i) * Sz(next_i) + 0.5 * (Sp(i) * Sm(next_i) + Sm(i) * Sp(next_i))
+    # Note: `global` is needed when running as a top-level script, but can be
+    # omitted if this loop is inside a function or run directly in the REPL.
+    global op += 1.0 * Sz(i) * Sz(next_i) + 0.5 * (Sp(i) * Sm(next_i) + Sm(i) * Sp(next_i))
 end
 
 # 3. Create MatrixFreeHamiltonian (site is automatically inferred from basis)
-H = MatrixFreeHamiltonian(basis, op)
+# Automatically targets GPU if available ("cuda:0"), otherwise falls back to CPU
+target_dev = is_gpu_build() ? "cuda:0" : "cpu"
+H = MatrixFreeHamiltonian(basis, op; device=target_dev)
+println("Running on execution device: ", target_dev)
 
 # 4. Perform matrix-vector multiplication (y = H * x)
 x = zeros(ComplexF64, dimension(basis))
@@ -161,10 +167,14 @@ Site objects define local degrees of freedom and local operator matrices.
 Basis objects construct quantum many-body state representations across lattice sites.
 
 #### Constructors
-- **`SpinHalfBasis(num_sites::Integer, sector::Union{Sector, Nothing}=nothing)`**
-- **`FermionBasis(num_sites::Integer, sector::Union{Sector, Nothing}=nothing)`**
-- **`HubbardBasis(num_sites::Integer, sector::Union{Sector, Nothing}=nothing)`**
-- **`TJBasis(num_sites::Integer, sector::Union{Sector, Nothing}=nothing)`**
+- **`SpinHalfBasis(num_sites::Integer, sector=nothing; sz=nothing)`**:
+  Constructs a spin-1/2 basis. Accepts optional `sector::Sector` or direct keyword `sz=0` (automatically builds $S_z$ sector).
+- **`FermionBasis(num_sites::Integer, sector=nothing; n=nothing)`**:
+  Constructs a spinless fermion basis. Accepts optional keyword `n=2` to conserve particle count.
+- **`HubbardBasis(num_sites::Integer, sector=nothing; nup=nothing, ndn=nothing)`**:
+  Constructs an electronic Fermi-Hubbard basis. Accepts optional keywords `nup=1, ndn=1`.
+- **`TJBasis(num_sites::Integer, sector=nothing; nup=nothing, ndn=nothing)`**:
+  Constructs a $t$-$J$ model basis with no double-occupancy. Accepts optional keywords `nup=1, ndn=1`.
 
 #### Query & Inspection Methods
 - **`dimension(b::AbstractBasis)::UInt64`**: Returns total Hilbert space dimension.
@@ -182,27 +192,38 @@ Basis objects construct quantum many-body state representations across lattice s
 
 `OpSum` stores operator term expressions used to construct matrix-free Hamiltonians.
 
-#### `OpSum()`
-- **Description**: Constructs an empty `OpSum` handle.
+#### Operator Generators & Arithmetic Overloading
+Operators support natural mathematical algebra (`+`, `-`, `*`):
+- **Spin-1/2**: `Sz(i)`, `Sp(i)`, `Sm(i)`, `Sx(i)`, `Sy(i)`
+- **Spinless Fermions**: `c(i)`, `cdag(i)`, `n(i)`
+- **Hubbard / Interacting Electrons**: `CdagUp(i)`, `CUp(i)`, `CdagDn(i)`, `CDn(i)`, `Nup(i)`, `Ndn(i)`, `Nupdn(i)`
+- **Bosons**: `Bdag(i)`, `B(i)`, `N(i)`
 
-#### `add_term!(op::OpSum, coeff::Number, op1::AbstractString, site1::Integer)`
-- **Description**: Adds a 1-body operator term $\text{coeff} \cdot \hat{O}_{1, \text{site1}}$.
+```julia
+op = OpSum()
+# Expression arithmetic
+op += 1.0 * Sz(0) * Sz(1) + 0.5 * (Sp(0) * Sm(1) + Sm(0) * Sp(1))
+# Hubbard interaction
+op += -1.0 * (CdagUp(0) * CUp(1) + CdagDn(0) * CDn(1)) + 4.0 * Nupdn(0)
+```
 
-#### `add_term!(op::OpSum, coeff::Number, op1::AbstractString, site1::Integer, op2::AbstractString, site2::Integer)`
-- **Description**: Adds a 2-body operator term $\text{coeff} \cdot \hat{O}_{1, \text{site1}} \hat{O}_{2, \text{site2}}$.
-
-#### `add_term!(op::OpSum, coeff::Number, ops::Vector{<:AbstractString}, sites::Vector{<:Integer})`
-- **Description**: Adds an arbitrary $N$-body operator term $\text{coeff} \cdot \prod_{k=1}^N \hat{O}_{k, \text{sites}[k]}$.
-
-#### `clear!(op::OpSum)`
-- **Description**: Clears all operator terms stored in `op`.
+#### Raw Term Methods
+- **`add_term!(op, coeff, op1, site1)`**: Adds 1-body term.
+- **`add_term!(op, coeff, op1, site1, op2, site2)`**: Adds 2-body term.
+- **`add_term!(op, coeff, ops_vec, sites_vec)`**: Adds arbitrary $N$-body term.
+- **`clear!(op)`**: Clears all terms.
+- **`validate(op, nsites)`**: Validates site indices against system size.
 
 ---
 
 ### Matrix-Free Hamiltonian (`MatrixFreeHamiltonian`)
 
-#### `MatrixFreeHamiltonian(basis::AbstractBasis, site::AbstractSite, opsum::OpSum)`
-- **Description**: Constructs a matrix-free Hamiltonian. Holds reference guards to `basis`, `site`, and `opsum` to guarantee GC safety.
+#### Constructors
+- **`MatrixFreeHamiltonian(basis, site, opsum; device="cpu")`**:
+  Constructs a matrix-free Hamiltonian. Holds reference guards to `basis`, `site`, and `opsum` to guarantee GC safety.
+- **`MatrixFreeHamiltonian(basis, opsum; device="cpu")`**:
+  Convenience constructor that automatically infers the default `Site` model from `basis`.
+- **`device` Keyword**: Specifies execution target (`"cpu"`, `"cuda:0"`, `"hip"`, etc.). Throws an `ArgumentError` if GPU acceleration is requested on a CPU-only build.
 
 #### `dimension(H::MatrixFreeHamiltonian)::UInt64`
 - **Description**: Returns the dimension of the Hamiltonian matrix.
@@ -300,6 +321,71 @@ ftlm(
   - `.partition_function`: Thermal partition function $Z(\beta)$.
   - `.internal_energy`: Internal energy $E(\beta)$.
   - `.specific_heat`: Specific heat capacity $C_v(\beta)$.
+
+---
+
+## Multithreading & CPU Core Management
+
+`QuantumKrylov.jl` uses a high-performance C++ backend powered by **Kokkos with OpenMP** for multi-core CPU parallelism (matrix-free applies $y = H \cdot x$, linear algebra, and solver iterations).
+
+### Understanding Julia Threads vs. OpenMP Threads
+
+Julia task threads and C++ OpenMP threads are **completely independent**:
+
+| Thread Pool | Configured Via | Governs |
+| :--- | :--- | :--- |
+| **Julia Runtime Threads** | `julia -t N` or `JULIA_NUM_THREADS` | Julia-level concurrency (`Threads.@threads`, `Threads.@spawn`) |
+| **OpenMP C++ Threads** | `OMP_NUM_THREADS=M` | `qkrylov` C++ backend parallelism, matrix-vector products, solvers |
+
+*Note: Starting Julia with `julia -t 1` only limits Julia's internal tasks. By default, OpenMP will still detect and utilize all available CPU cores unless `OMP_NUM_THREADS` is set.*
+
+### How to Control C++ Worker Threads
+
+#### 1. From the Terminal (Recommended)
+```bash
+# Force both Julia and qkrylov to use 1 thread:
+OMP_NUM_THREADS=1 julia -t 1
+
+# Limit qkrylov C++ parallel kernels to 4 cores:
+OMP_NUM_THREADS=4 julia -t 1
+```
+
+#### 2. Inside Julia (Before Loading the Package)
+```julia
+# Set OpenMP thread count before initializing QuantumKrylov
+ENV["OMP_NUM_THREADS"] = "4"
+using QuantumKrylov
+```
+
+### Best Practices for High Performance
+
+- **Single Large System**: Use `julia -t 1` and let `OMP_NUM_THREADS` use all available physical CPU cores for maximum parallel solver throughput.
+- **Julia Parallel Parameter Sweeps (`Threads.@threads`)**: Set `OMP_NUM_THREADS=1` and `julia -t N` to prevent CPU oversubscription from nested thread pools.
+- **Recommended OpenMP Affinity**: For best cache locality and NUMA performance:
+  ```bash
+  export OMP_PROC_BIND=spread
+  export OMP_PLACES=threads
+  ```
+
+### Device & Hardware Query API
+
+Query compiled accelerator capabilities and initialize execution targets:
+
+```julia
+using QuantumKrylov
+
+# Check if qkrylov was built with GPU acceleration (CUDA, HIP, SYCL)
+is_gpu = is_gpu_build()  # Returns Bool
+
+# Query active GPU backend name ("cuda", "hip", "sycl", or nothing)
+gpu = find_gpu()
+
+# Query number of physical GPUs detected on system
+count = gpu_count()      # Returns Int
+
+# Explicitly initialize device runtime (e.g. "cpu", "cuda:0")
+initialize_device!("cpu")
+```
 
 ---
 

@@ -2,14 +2,18 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "c42bb6f5938a44c0ea3e76401ccd291be1199ca1"
+project_hash = "b86743e62c59a479c763f752e94c0f8b26b652b5"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 version = "1.11.0"
 
+[[deps.Libdl]]
+uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+version = "1.11.0"
+
 [[deps.QuantumKrylov]]
-deps = ["Artifacts"]
+deps = ["Artifacts", "Libdl"]
 path = "."
 uuid = "ded8de50-d5ab-4d43-aa04-497c0da83418"
 version = "0.1.0"
