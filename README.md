@@ -126,15 +126,20 @@ basis = SpinHalfBasis(N)
 op = OpSum()
 for i in 0:(N - 2)
     # Heisenberg interaction: Sz_i Sz_{i+1} + 0.5(Sp_i Sm_{i+1} + Sm_i Sp_{i+1})
-    op += 1.0 * Sz(i) * Sz(i + 1) + 0.5 * (Sp(i) * Sm(i + 1) + Sm(i) * Sp(i + 1))
+    # Note: `global` is needed when running as a top-level script, but can be
+    # omitted if this loop is inside a function or run directly in the REPL.
+    global op += 1.0 * Sz(i) * Sz(i + 1) + 0.5 * (Sp(i) * Sm(i + 1) + Sm(i) * Sp(i + 1))
 end
 
 # Construct MatrixFreeHamiltonian (site model automatically inferred from basis)
-H = MatrixFreeHamiltonian(basis, op)
+# Targets GPU if available ("cuda:0"), otherwise falls back to CPU
+target_device = is_gpu_build() ? "cuda:0" : "cpu"
+H = MatrixFreeHamiltonian(basis, op; device=target_device)
 
 # Compute ground state energy and wavefunction
 res = lanczos_ground_state(H, return_state=true)
 
+println("Execution device:    ", target_device)
 println("Ground state energy: ", res.energy)
 println("Iterations executed: ", res.iterations)
 println("Convergence status:  ", res.converged)
@@ -142,7 +147,7 @@ println("Convergence status:  ", res.converged)
 
 ## Things To Be Done (Roadmap)
 
-- **GPU Acceleration**: CUDA/HIP Kokkos execution space optimization for large-scale SpMV.
+- **Distributed Multi-GPU**: Multi-node MPI + CUDA/HIP Kokkos execution space scaling for very large Hilbert spaces.
 - **HDF5 Integration**: Efficient storage of large eigenvectors and Krylov subspace results.
 
 ## Documentation

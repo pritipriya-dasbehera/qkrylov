@@ -237,14 +237,17 @@ op    = OpSum()
 add_term!(op, 1.0, "Sz", 0, "Sz", 1)
 
 # 2. Construct MatrixFreeHamiltonian (site is automatically inferred from basis)
-H = MatrixFreeHamiltonian(basis, op)
+# Automatically targets GPU if available ("cuda:0", "cuda"), otherwise falls back to CPU
+target_dev = is_gpu_build() ? "cuda:0" : "cpu"
+H = MatrixFreeHamiltonian(basis, op; device=target_dev)
 println(H) # Outputs: MatrixFreeHamiltonian(dim = 16, basis = SpinHalfBasis(sites = 4, dim = 16))
 
-# Alternatively, explicitly specify the site model:
+# Alternatively, explicitly specify the site model and execution target:
 site = SpinHalfSite()
-H_explicit = MatrixFreeHamiltonian(basis, site, op)
+H_explicit = MatrixFreeHamiltonian(basis, site, op; device="cpu")
 
 # 3. Perform matrix-vector multiplication (y = H * x)
+# Evaluated on the target device (Kokkos OpenMP on CPU, or CUDA on GPU)
 x = zeros(ComplexF64, dimension(H))
 x[1] = 1.0 + 0.0im
 y = H * x # Vector{ComplexF64} of length dimension(H)
@@ -261,9 +264,9 @@ sz  = size(H)      # (16, 16)
 
 | Function / Syntax | Arguments | Return Type | Description |
 | :--- | :--- | :--- | :--- |
-| `MatrixFreeHamiltonian(basis, opsum; device="cpu")` | `basis::AbstractBasis`<br>`opsum::OpSum`<br>`device::AbstractString="cpu"` | `MatrixFreeHamiltonian` | **Convenience Constructor**. Automatically infers the matching default `Site` model (`SpinHalfSite`, `FermionSite`, `HubbardSite`, or `TJSite`) from the basis type. Targets specified execution `device` (default `"cpu"`). |
+| `MatrixFreeHamiltonian(basis, opsum; device="cpu")` | `basis::AbstractBasis`<br>`opsum::OpSum`<br>`device::AbstractString="cpu"` | `MatrixFreeHamiltonian` | **Convenience Constructor**. Automatically infers the matching default `Site` model (`SpinHalfSite`, `FermionSite`, `HubbardSite`, or `TJSite`) from the basis type. Targets specified execution `device` (`"cpu"`, `"cuda:0"`, `"hip"`, etc.). |
 | `MatrixFreeHamiltonian(basis, site, opsum; device="cpu")` | `basis::AbstractBasis`<br>`site::AbstractSite`<br>`opsum::OpSum`<br>`device::AbstractString="cpu"` | `MatrixFreeHamiltonian` | **Explicit Constructor**. Constructs a matrix-free Hamiltonian operator with a specified site model on target `device`. |
-| `H * x` | `H::MatrixFreeHamiltonian`<br>`x::AbstractVector{<:Number}` | `Vector{ComplexF64}` | Performs zero-copy matrix-vector multiplication $y = H \cdot x$. Length of `x` must equal `dimension(H)`. |
+| `H * x` | `H::MatrixFreeHamiltonian`<br>`x::AbstractVector{<:Number}` | `Vector{ComplexF64}` | Performs zero-copy matrix-vector multiplication $y = H \cdot x$ on target device. Length of `x` must equal `dimension(H)`. |
 | `diagonal(H)` | `H::MatrixFreeHamiltonian` | `Vector{Float64}` | Computes and returns matrix-free diagonal elements $H_{ii}$. |
 | `dimension(H)` | `H::MatrixFreeHamiltonian` | `UInt64` | Returns total matrix dimension of `H`. |
 | `size(H)` | `H::MatrixFreeHamiltonian` | `(Int, Int)` | Returns `(dim, dim)` matrix shape tuple. |
@@ -272,12 +275,15 @@ sz  = size(H)      # (16, 16)
 
 ## 5. Krylov & Lanczos Solvers
 
+> **Hardware Acceleration (CPU & GPU)**:
+> All solvers below inherit the execution space of the supplied `MatrixFreeHamiltonian`. If `H` was created with `device="cuda:0"`, all matrix-vector multiplications ($y = H \cdot x$), Krylov projection steps, and vector updates execute entirely on the GPU via Kokkos CUDA kernels without host-device transfer bottlenecks.
+
 ### 5.1 Ground State Solver (`lanczos_ground_state`)
 
 #### How to use `lanczos_ground_state`
 
 ```julia
-# 1. Energy-only calculation (fast memory-efficient path)
+# 1. Energy-only calculation (runs on H's target device: CPU or GPU)
 res = lanczos_ground_state(H, maxiter=200, tol=1e-12)
 println(res)            # Outputs: LanczosResult(energy = -2.0, iterations = 14, converged = true)
 E0 = res.energy          # Ground state energy Float64
@@ -469,5 +475,60 @@ initialize_device!("cpu")
 | `find_gpu()` | None | `Union{String, Nothing}` | Returns the active GPU backend name, or `nothing` for CPU builds. |
 | `gpu_count()` | None | `Int` | Returns the number of physical GPUs detected on the system. |
 | `initialize_device!(device)` | `device::AbstractString="cpu"` | `Nothing` | Explicitly initializes Kokkos execution spaces for `device`. |
+
+### 6.6 Complete GPU Acceleration Workflow
+
+The following example demonstrates an end-to-end workflow querying hardware capabilities, targeting an NVIDIA GPU device, and running Lanczos, Davidson, and Dynamical response solvers:
+
+```julia
+using QuantumKrylov
+
+# 1. Hardware detection & device configuration
+if is_gpu_build()
+    backend = find_gpu()
+    n_gpus  = gpu_count()
+    println("Accelerated backend active: $backend with $n_gpus physical GPU(s)")
+
+    # Select target device (e.g. "cuda:0" for the first GPU)
+    target_device = "cuda:0"
+    initialize_device!(target_device)
+else
+    println("Running on CPU with OpenMP backend")
+    target_device = "cpu"
+end
+
+# 2. Setup symmetry sector and basis
+# 12-site spin-1/2 chain with Sz = 0 symmetry (Hilbert space dimension = 924)
+sec = Sector()
+set_sz!(sec, 0)
+basis = SpinHalfBasis(12, sec)
+
+# 3. Define Heisenberg Hamiltonian terms
+op = OpSum()
+for i in 0:10
+    # Note: `global` is needed when running as a top-level script
+    global op += 1.0 * Sz(i) * Sz(i + 1) + 0.5 * (Sp(i) * Sm(i + 1) + Sm(i) * Sp(i + 1))
+end
+
+# 4. Construct MatrixFreeHamiltonian on target device
+H = MatrixFreeHamiltonian(basis, op; device=target_device)
+println("Constructed Hamiltonian on: ", target_device, " (dimension = ", dimension(H), ")")
+
+# 5. Execute Solvers (All computations run directly on target device)
+# Ground state calculation:
+res_gs = lanczos_ground_state(H, return_state=true, tol=1e-12)
+println("Ground state energy: ", res_gs.energy)
+
+# Low-lying excited states using Davidson:
+res_dav = davidson_lowest(H, n_eig=3, tol=1e-8)
+println("Lowest 3 eigenvalues: ", res_dav.eigenvalues)
+
+# Dynamical spectral function calculation:
+v0 = H * res_gs.state
+cfr = continued_fraction_coeffs(H, v0, n_iter=50)
+I_omega = evaluate_spectral_function(cfr, 0.5, res_gs.energy, 0.05)
+println("Spectral function I(omega=0.5): ", I_omega)
+```
+
 
 

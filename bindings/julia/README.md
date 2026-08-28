@@ -30,7 +30,7 @@ The Julia interface is constructed directly on top of the binary-stable C ABI ex
 
 ### Option 1: Direct GitHub Installation for latest release (Prebuilt Binaries)
 
-You can install `QuantumKrylov.jl` directly from the `julia-release` branch. Julia's built-in **Artifacts** system automatically downloads and configures the native prebuilt binary (`libqkrylov.so`, `libqkrylov.dylib`, or `qkrylov.dll`) for your operating system and CPU architecture:
+You can install `QuantumKrylov.jl` directly from the `julia-release` branch. Julia's built-in **Artifacts** system automatically downloads and configures the native prebuilt binary (`libqkrylov.so`, `libqkrylov.dylib`, or `qkrylov.dll`) for your operating system and CPU architecture. On Linux systems with an NVIDIA GPU and driver 12+, it automatically downloads the **CUDA 12 accelerated** binary:
 
 In the Julia REPL (press `]` to open Pkg mode):
 ```julia
@@ -66,7 +66,7 @@ using QuantumKrylov
 
 ## Quickstart Example
 
-Here is a complete example constructing a 4-site spin-1/2 Heisenberg chain, computing its ground state energy and wavefunction, and running the Davidson solver for low-lying excited states:
+Here is a complete example constructing a 4-site spin-1/2 Heisenberg chain, computing its ground state energy and wavefunction, and running the Davidson solver for low-lying excited states (with automatic GPU acceleration when available):
 
 ```julia
 using QuantumKrylov
@@ -88,11 +88,16 @@ op = OpSum()
 N = 4
 for i in 0:(N - 1)
     next_i = mod(i + 1, N)
-    op += 1.0 * Sz(i) * Sz(next_i) + 0.5 * (Sp(i) * Sm(next_i) + Sm(i) * Sp(next_i))
+    # Note: `global` is needed when running as a top-level script, but can be
+    # omitted if this loop is inside a function or run directly in the REPL.
+    global op += 1.0 * Sz(i) * Sz(next_i) + 0.5 * (Sp(i) * Sm(next_i) + Sm(i) * Sp(next_i))
 end
 
 # 3. Create MatrixFreeHamiltonian (site is automatically inferred from basis)
-H = MatrixFreeHamiltonian(basis, op)
+# Automatically targets GPU if available ("cuda:0"), otherwise falls back to CPU
+target_dev = is_gpu_build() ? "cuda:0" : "cpu"
+H = MatrixFreeHamiltonian(basis, op; device=target_dev)
+println("Running on execution device: ", target_dev)
 
 # 4. Perform matrix-vector multiplication (y = H * x)
 x = zeros(ComplexF64, dimension(basis))
