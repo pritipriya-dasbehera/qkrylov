@@ -126,7 +126,7 @@ basis = SpinHalfBasis(N)
 op = OpSum()
 for i in 0:(N - 2)
     # Heisenberg interaction: Sz_i Sz_{i+1} + 0.5(Sp_i Sm_{i+1} + Sm_i Sp_{i+1})
-    op += 1.0 * Sz(i) * Sz(i + 1) + 0.5 * (Sp(i) * Sm(i + 1) + Sm(i) * Sp(i + 1))
+    global op += 1.0 * Sz(i) * Sz(i + 1) + 0.5 * (Sp(i) * Sm(i + 1) + Sm(i) * Sp(i + 1))
 end
 
 # Construct MatrixFreeHamiltonian (site model automatically inferred from basis)

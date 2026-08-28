@@ -88,7 +88,7 @@ op = OpSum()
 N = 4
 for i in 0:(N - 1)
     next_i = mod(i + 1, N)
-    op += 1.0 * Sz(i) * Sz(next_i) + 0.5 * (Sp(i) * Sm(next_i) + Sm(i) * Sp(next_i))
+    global op += 1.0 * Sz(i) * Sz(next_i) + 0.5 * (Sp(i) * Sm(next_i) + Sm(i) * Sp(next_i))
 end
 
 # 3. Create MatrixFreeHamiltonian (site is automatically inferred from basis)
