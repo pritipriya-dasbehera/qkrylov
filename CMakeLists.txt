@@ -61,7 +61,7 @@ if(NOT Kokkos_FOUND)
     FetchContent_Declare(
         kokkos
         GIT_REPOSITORY https://github.com/kokkos/kokkos.git
-        GIT_TAG        4.4.01
+        GIT_TAG        4.7.04
     )
     # Force Position Independent Code globally so Kokkos thread_local variables use global-dynamic TLS
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
