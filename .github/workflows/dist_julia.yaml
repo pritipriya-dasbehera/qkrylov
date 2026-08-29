@@ -220,7 +220,7 @@ jobs:
           elif [ -n "${{ inputs.release_tag }}" ]; then
             TAG_NAME="${{ inputs.release_tag }}"
           else
-            TAG_NAME="latest-binaries"
+            TAG_NAME="julia-latest"
           fi
           echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_ENV"
 
@@ -237,15 +237,15 @@ jobs:
           echo "Creating permanent archive release for $ARCHIVE_TAG..."
           gh release create "$ARCHIVE_TAG" qkrylov-*.tar.gz \
             --title "Build ${SHORT_SHA}" \
-            --notes "Permanent binary archive for commit ${GITHUB_SHA} built on ${BUILD_DATE}." \
+            --notes "Permanent binary archive for commit ${GITHUB_SHA} built on ${BUILD_DATE}. To install this specific build in Julia: Pkg.add(url=\"https://github.com/${{ github.repository }}.git\", rev=\"${GITHUB_SHA}\", subdir=\"bindings/julia\")" \
             --target "$GITHUB_SHA" || true
 
           # 2. Recreate the rolling release tag so GitHub shows "released just now"
           echo "Recreating rolling release $TAG_NAME to refresh release timestamp..."
           gh release delete "$TAG_NAME" --yes || true
           gh release create "$TAG_NAME" qkrylov-*.tar.gz \
-            --title "Latest Binaries" \
-            --notes "Automated multi-platform native binary release for QuantumKrylov Julia bindings. Updated on ${BUILD_DATE} from commit ${SHORT_SHA}." \
+            --title "julia-latest" \
+            --notes "Automated multi-platform native binary release for QuantumKrylov Julia bindings. Updated on ${BUILD_DATE} from commit ${SHORT_SHA}. To install the latest build in Julia: Pkg.add(url=\"https://github.com/${{ github.repository }}.git\", rev=\"julia-release\", subdir=\"bindings/julia\")" \
             --target "$GITHUB_SHA"
 
       - name: Generate Artifacts.toml
@@ -265,7 +265,7 @@ jobs:
               except Exception:
                   repo = "sjp95/qkrylov"
 
-          tag = os.environ.get("TAG_NAME", "latest-binaries")
+          tag = os.environ.get("TAG_NAME", "julia-latest")
 
           meta_files = sorted(glob.glob("metadata-*.json"))
           

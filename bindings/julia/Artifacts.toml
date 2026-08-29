@@ -1,4 +1,4 @@
-# Auto-generated Artifacts.toml for QuantumKrylov (latest-binaries)
+# Auto-generated Artifacts.toml for QuantumKrylov (julia-latest)
 
 [[libqkrylov]]
 arch = "aarch64"
@@ -7,7 +7,7 @@ os = "macos"
 
     [[libqkrylov.download]]
     sha256 = "d167103fb3a0e5c4af922249ac4f175bde21d09eb5faa97581531f51f8633d39"
-    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-aarch64-apple-darwin.tar.gz"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-latest/qkrylov-aarch64-apple-darwin.tar.gz"
 
 [[libqkrylov]]
 arch = "aarch64"
@@ -16,7 +16,7 @@ os = "linux"
 
     [[libqkrylov.download]]
     sha256 = "22d0594bcfaed395d68c57dea217119f85bcb9e023c0d633d693de67f4a6c5c0"
-    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-aarch64-linux-gnu.tar.gz"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-latest/qkrylov-aarch64-linux-gnu.tar.gz"
 
 [[libqkrylov]]
 arch = "x86_64"
@@ -26,7 +26,7 @@ os = "linux"
 
     [[libqkrylov.download]]
     sha256 = "79e84aed7b83be23269a5bbda03b68a1194e3d7b4d60b2a1786ce1642aec5f85"
-    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-linux-gnu-cuda12.tar.gz"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-latest/qkrylov-x86_64-linux-gnu-cuda12.tar.gz"
 
 [[libqkrylov]]
 arch = "x86_64"
@@ -36,7 +36,7 @@ os = "linux"
 
     [[libqkrylov.download]]
     sha256 = "aae1ab1eb83b5ae629db45730231125403e25291bd5477934f587fe4cdf81f05"
-    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-linux-gnu.tar.gz"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-latest/qkrylov-x86_64-linux-gnu.tar.gz"
 
 [[libqkrylov]]
 arch = "x86_64"
@@ -45,4 +45,4 @@ os = "windows"
 
     [[libqkrylov.download]]
     sha256 = "4b9e33e903b60d86c883d42f1b738e56e61df54bcdbcb3f93dc39f33d4e65625"
-    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/latest-binaries/qkrylov-x86_64-w64-mingw32.tar.gz"
+    url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-latest/qkrylov-x86_64-w64-mingw32.tar.gz"
