@@ -236,22 +236,17 @@ jobs:
           # 1. Create an immutable historical archive for this exact build
           echo "Creating permanent archive release for $ARCHIVE_TAG..."
           gh release create "$ARCHIVE_TAG" qkrylov-*.tar.gz \
-            --title "Build ${SHORT_SHA} (${BUILD_DATE})" \
+            --title "Build ${SHORT_SHA}" \
             --notes "Permanent binary archive for commit ${GITHUB_SHA} built on ${BUILD_DATE}." \
             --target "$GITHUB_SHA" || true
 
-          # 2. Upload to the rolling release tag (default: latest-binaries)
-          echo "Updating rolling release $TAG_NAME..."
-          gh release upload "$TAG_NAME" qkrylov-*.tar.gz --clobber || \
+          # 2. Recreate the rolling release tag so GitHub shows "released just now"
+          echo "Recreating rolling release $TAG_NAME to refresh release timestamp..."
+          gh release delete "$TAG_NAME" --yes || true
           gh release create "$TAG_NAME" qkrylov-*.tar.gz \
-            --title "Prebuilt Binaries ($TAG_NAME)" \
+            --title "Latest Binaries" \
+            --notes "Automated multi-platform native binary release for QuantumKrylov Julia bindings. Updated on ${BUILD_DATE} from commit ${SHORT_SHA}." \
             --target "$GITHUB_SHA"
-
-          # 3. Refresh metadata, commit pointer, and timestamp on the rolling release
-          gh release edit "$TAG_NAME" \
-            --target "$GITHUB_SHA" \
-            --title "Prebuilt Binaries ($TAG_NAME)" \
-            --notes "Latest multi-platform binaries. Updated on ${BUILD_DATE} from commit ${SHORT_SHA}." || true
 
       - name: Generate Artifacts.toml
         shell: bash
