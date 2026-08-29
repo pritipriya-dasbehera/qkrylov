@@ -30,7 +30,7 @@ jobs:
             arch: x86_64
             cuda: none
           - platform: x86_64-linux-gnu-cuda12
-            os: ubuntu-22.04
+            os: ubuntu-latest
             os_name: linux
             arch: x86_64
             cuda: "12.0"
@@ -63,40 +63,59 @@ jobs:
           export HOMEBREW_NO_AUTO_UPDATE=1
           brew install libomp
 
-      - name: Setup CUDA Toolkit (Linux CUDA)
-        if: matrix.cuda != 'none'
+      - name: Build CUDA Library in manylinux_2_28 Container (GLIBC 2.28 + Static CUDA Runtime)
+        if: matrix.platform == 'x86_64-linux-gnu-cuda12'
         shell: bash
         run: |
-          if ! command -v nvcc &> /dev/null; then
-            echo "Installing NVIDIA CUDA repository keyring..."
-            wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-            sudo dpkg -i cuda-keyring_1.1-1_all.deb
-            sudo apt-get update -q
-            sudo apt-get install -y -q \
+          docker run --rm -v "$GITHUB_WORKSPACE":/workspace -w /workspace quay.io/pypa/manylinux_2_28_x86_64 bash -c '
+            set -e
+            dnf install -y "dnf-command(config-manager)" --disablerepo=epel
+            dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+            dnf install -y gcc-toolset-12-gcc-c++ \
               cuda-nvcc-12-6 \
-              cuda-cudart-dev-12-6 \
-              cuda-driver-dev-12-6 \
-              cuda-cccl-12-6
+              cuda-cudart-devel-12-6 \
+              cuda-driver-devel-12-6 \
+              cuda-cccl-12-6 \
+              --disablerepo=epel
 
-            CUDA_HOME="/usr/local/cuda-12.6"
-            if [ ! -d "$CUDA_HOME" ]; then
-              CUDA_HOME=$(ls -d /usr/local/cuda-12* 2>/dev/null | sort -V | tail -n 1)
-            fi
-            if [ ! -d "$CUDA_HOME" ] && [ -d "/usr/local/cuda" ]; then
-              CUDA_HOME="/usr/local/cuda"
-            fi
+            source /opt/rh/gcc-toolset-12/enable
 
-            echo "Found CUDA at ${CUDA_HOME}"
-            echo "CUDA_HOME=${CUDA_HOME}" >> "$GITHUB_ENV"
-            echo "${CUDA_HOME}/bin" >> "$GITHUB_PATH"
-            echo "LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+            # Setup CUDA environment inside container
+            export CUDA_HOME=/usr/local/cuda-12.6
+            export PATH="${CUDA_HOME}/bin:${PATH}"
+            export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:${LD_LIBRARY_PATH}"
 
+            # Link libcuda stub if needed for driver API linking
             if [ -d "${CUDA_HOME}/lib64/stubs" ] && [ ! -f "${CUDA_HOME}/lib64/libcuda.so" ]; then
-              sudo ln -sf "${CUDA_HOME}/lib64/stubs/libcuda.so" "${CUDA_HOME}/lib64/libcuda.so" || true
+              ln -sf "${CUDA_HOME}/lib64/stubs/libcuda.so" "${CUDA_HOME}/lib64/libcuda.so" || true
             fi
-          fi
 
-      - name: Configure and Build C++ Library
+            # Replace dynamic libcudart.so with a symlink to libcudart_static.a
+            # This satisfies CMake FindCUDAToolkit while ensuring the linker statically embeds the runtime
+            ln -sf libcudart_static.a "${CUDA_HOME}/lib64/libcudart.so"
+            ln -sf libcudart_static.a "${CUDA_HOME}/lib64/libcudart.so.12"
+
+            cmake -B build -S . \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CXX_COMPILER=g++ \
+              -DKokkos_ENABLE_CUDA=ON \
+              -DCMAKE_CUDA_HOST_COMPILER=g++ \
+              -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.6/bin/nvcc \
+              -DKokkos_ARCH_AMPERE80=ON \
+              -DCMAKE_CUDA_FLAGS="-cudart=static -gencode arch=compute_80,code=compute_80" \
+              -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--allow-shlib-undefined" \
+              -DQKRYLOV_BUILD_TESTS=OFF \
+              -DQKRYLOV_BUILD_EXAMPLES=OFF \
+              -DQKRYLOV_BUILD_PYTHON=OFF \
+              -DCMAKE_INSTALL_PREFIX=artifact_staging
+
+            cmake --build build -j 4
+            cmake --install build
+            chmod -R a+rX /workspace/artifact_staging
+          '
+
+      - name: Configure and Build C++ Library (Host Platforms)
+        if: matrix.platform != 'x86_64-linux-gnu-cuda12'
         shell: bash
         run: |
           EXTRA_FLAGS=""
@@ -104,13 +123,7 @@ jobs:
             OPENMP_PREFIX=$(brew --prefix libomp)
             EXTRA_FLAGS="-DOpenMP_ROOT=${OPENMP_PREFIX} -DCMAKE_PREFIX_PATH=${OPENMP_PREFIX}"
           fi
-
-          if [ "${{ matrix.cuda }}" != "none" ]; then
-            CUDA_NVCC="${CUDA_HOME:-/usr/local/cuda-12.6}/bin/nvcc"
-            EXTRA_FLAGS="${EXTRA_FLAGS} -DKokkos_ENABLE_CUDA=ON -DCMAKE_CUDA_HOST_COMPILER=${CXX:-g++} -DCMAKE_CUDA_COMPILER=${CUDA_NVCC} -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined -DCMAKE_SHARED_LINKER_FLAGS=-Wl,--allow-shlib-undefined -DKokkos_ARCH_AMPERE80=ON"
-          else
-            EXTRA_FLAGS="${EXTRA_FLAGS} -DKokkos_ENABLE_CUDA=OFF"
-          fi
+          EXTRA_FLAGS="${EXTRA_FLAGS} -DKokkos_ENABLE_CUDA=OFF"
 
           cmake -B build -S . \
             -DCMAKE_BUILD_TYPE=Release \
