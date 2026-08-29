@@ -72,6 +72,7 @@ function find_libqkrylov()
                     artifact_dir = Artifacts.artifact_path(hash)
                     for candidate_rel in [
                         joinpath("lib", "libqkrylov.so"),
+                        joinpath("lib64", "libqkrylov.so"),
                         joinpath("lib", "libqkrylov.dylib"),
                         joinpath("lib", "qkrylov.dll"),
                         joinpath("bin", "qkrylov.dll"),
@@ -111,7 +112,7 @@ function find_libqkrylov()
                     end
                     if Artifacts.artifact_exists(hash_cpu)
                         cpu_dir = Artifacts.artifact_path(hash_cpu)
-                        for cand in [joinpath("lib", "libqkrylov.so"), "libqkrylov.so"]
+                        for cand in [joinpath("lib", "libqkrylov.so"), joinpath("lib64", "libqkrylov.so"), "libqkrylov.so"]
                             p = joinpath(cpu_dir, cand)
                             if isfile(p)
                                 return p
