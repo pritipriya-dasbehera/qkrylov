@@ -81,7 +81,41 @@ function find_libqkrylov()
                     ]
                         candidate_path = joinpath(artifact_dir, candidate_rel)
                         if isfile(candidate_path)
-                            return candidate_path
+                            if has_cuda
+                                h = Libdl.dlopen(candidate_path; throw_error=false)
+                                if h !== nothing
+                                    Libdl.dlclose(h)
+                                    return candidate_path
+                                else
+                                    break
+                                end
+                            else
+                                return candidate_path
+                            end
+                        end
+                    end
+                end
+            end
+
+            if has_cuda
+                platform["cuda"] = "none"
+                meta_cpu = Artifacts.artifact_meta("libqkrylov", artifacts_file; platform=platform)
+                if meta_cpu !== nothing
+                    hash_cpu = Base.SHA1(meta_cpu["git-tree-sha1"])
+                    if !Artifacts.artifact_exists(hash_cpu)
+                        try
+                            pkg_mod = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
+                            Base.invokelatest(getfield(getfield(pkg_mod, :Artifacts), :ensure_artifact_installed), "libqkrylov", artifacts_file; platform=platform)
+                        catch
+                        end
+                    end
+                    if Artifacts.artifact_exists(hash_cpu)
+                        cpu_dir = Artifacts.artifact_path(hash_cpu)
+                        for cand in [joinpath("lib", "libqkrylov.so"), "libqkrylov.so"]
+                            p = joinpath(cpu_dir, cand)
+                            if isfile(p)
+                                return p
+                            end
                         end
                     end
                 end
