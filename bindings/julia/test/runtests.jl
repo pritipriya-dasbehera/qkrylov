@@ -314,5 +314,413 @@ using QuantumKrylov
         b_tj = TJBasis(2; nup=1, ndn=1)
         @test dimension(b_tj) == 2
     end
+
+    @testset "Dual-Precision Pipeline (Float64 and Float32)" begin
+        N = 4
+        basis = SpinHalfBasis(N; sz=0)
+        op = OpSum()
+        for i in 0:(N-2)
+            op += 1.0 * Sz(i) * Sz(i+1) + 0.5 * (Sp(i)*Sm(i+1) + Sm(i)*Sp(i+1))
+        end
+
+        # 1. FP64 (Default on CPU)
+        H64 = MatrixFreeHamiltonian(basis, op)
+        @test H64.precision === Float64
+        @test dimension(H64) == 6
+
+        d64 = diagonal(H64)
+        @test eltype(d64) === Float64
+        @test length(d64) == 6
+
+        x64 = randn(ComplexF64, 6)
+        x64 ./= sqrt(sum(abs2, x64))
+        y64 = H64 * x64
+        @test eltype(y64) === ComplexF64
+
+        res64 = lanczos_ground_state(H64, maxiter=50, tol=1e-12, return_state=true)
+        @test res64.energy isa Float64
+        @test isapprox(res64.energy, -1.6160254037844386, atol=1e-10)
+        @test res64.converged == true
+        @test eltype(res64.state) === ComplexF64
+
+        # 2. FP32 Explicit
+        H32 = MatrixFreeHamiltonian(basis, op; precision=Float32)
+        @test H32.precision === Float32
+        @test dimension(H32) == 6
+
+        d32 = diagonal(H32)
+        @test eltype(d32) === Float32
+        @test length(d32) == 6
+        @test isapprox(Vector{Float64}(d32), d64, atol=1e-5)
+
+        x32 = Vector{ComplexF32}(x64)
+        y32 = H32 * x32
+        @test eltype(y32) === ComplexF32
+        @test isapprox(Vector{ComplexF64}(y32), y64, atol=1e-5)
+
+        res32 = lanczos_ground_state(H32, maxiter=50, tol=1e-6, return_state=true)
+        @test res32.energy isa Float32
+        @test isapprox(res32.energy, Float32(-1.6160254), atol=1e-4)
+        @test res32.converged == true || res32.iterations == dimension(H32)
+        @test eltype(res32.state) === ComplexF32
+        # 3. Solvers with FP64 & FP32
+        dav64 = davidson_lowest(H64, n_eig=2, max_subspace=10, tol=1e-10)
+        @test eltype(dav64.eigenvalues) === Float64
+        @test isapprox(dav64.eigenvalues[1], res64.energy, atol=1e-10)
+
+        dav32 = davidson_lowest(H32, n_eig=2, max_subspace=10, tol=1e-5)
+        @test eltype(dav32.eigenvalues) === Float32
+        @test isapprox(dav32.eigenvalues[1], res32.energy, atol=1e-4)
+    end
+
+    @testset "Spin-1 & Correction Vector Spectroscopy" begin
+        # 4-site Spin-1 chain (S=1.0) with Sz=0 sector (dim = 19)
+        N = 4
+        site = SpinSSite(1.0)
+        @test string(site) == "SpinSSite(S = 1.0, dim = 3)"
+
+        basis = SpinSBasis(N, 1.0; sz=0)
+        @test dimension(basis) == 19
+        @test nsites(basis) == 4
+
+        op = OpSum()
+        for i in 0:(N-2)
+            op += 1.0 * Sz(i) * Sz(i+1) + 0.5 * (Sp(i)*Sm(i+1) + Sm(i)*Sp(i+1))
+        end
+
+        H = MatrixFreeHamiltonian(basis, site, op)
+        @test dimension(H) == 19
+        @test H.precision === Float64
+
+        # Ground state
+        res_gs = lanczos_ground_state(H, maxiter=100, tol=1e-10, return_state=true)
+        @test isapprox(res_gs.energy, -4.64575, atol=1e-4)
+        @test res_gs.converged == true
+
+        # Local operator O = Sz(0)
+        op_sz0 = OpSum()
+        op_sz0 += 1.0 * Sz(0)
+        H_sz0 = MatrixFreeHamiltonian(basis, site, op_sz0)
+        op_psi0 = H_sz0 * res_gs.state
+
+        # Correction vector solver
+        cv_res = solver_correction_vector(
+            H, op_psi0;
+            e0=res_gs.energy,
+            omega=1.5,
+            eta=0.1,
+            maxiter=100,
+            tol=1e-8,
+            return_vector=true
+        )
+        @test cv_res.converged == true
+        @test isapprox(cv_res.spectral_function, 0.032465, atol=1e-4)
+        @test length(cv_res.vector) == 19
+        @test eltype(cv_res.vector) === ComplexF64
+    end
+
+    @testset "Error Diagnostics & Message Retrieval" begin
+        clear_last_error()
+        @test get_last_error_message() == ""
+
+        # Test invalid argument via C API
+        status = ccall((:qkrylov_sector_set_sz, QuantumKrylov.libqkrylov), Cint, (Ptr{Cvoid}, Cint), C_NULL, Cint(0))
+        @test status == QuantumKrylov.QKRYLOV_ERROR_INVALID_ARG
+        err = get_last_error_message()
+        @test !isempty(err)
+        @test occursin("sector handle is null", err)
+
+        # Test clearing
+        clear_last_error()
+        @test get_last_error_message() == ""
+
+        # Test solver invalid maxiter throwing error containing diagnostic
+        H = MatrixFreeHamiltonian(SpinHalfBasis(2), OpSum())
+        err_thrown = try
+            lanczos_ground_state(H; maxiter=-5)
+            nothing
+        catch e
+            e
+        end
+        @test err_thrown isa ErrorException
+        @test occursin("maxiter must be positive", err_thrown.msg)
+    end
+
+    @testset "Basis, Site & OpSum Reflection + Site::apply" begin
+        # 1. Site Reflection & Action Evaluation
+        sh_site = SpinHalfSite()
+        @test site_type(sh_site) == :SpinHalf
+        @test isapprox(spin(sh_site), 0.5)
+        @test dimension_per_site(sh_site) == 2
+
+        # apply Sz on site 0, state 1 (|1> = spin up)
+        act = apply(sh_site, "Sz", 0, UInt64(1))
+        @test act.valid == true
+        @test act.new_state == 1
+        @test isapprox(act.matrix_element, 0.5 + 0.0im)
+
+        # apply Sz on site 0, state 0 (|0> = spin down)
+        act = apply(sh_site, "Sz", 0, UInt64(0))
+        @test act.valid == true
+        @test act.new_state == 0
+        @test isapprox(act.matrix_element, -0.5 + 0.0im)
+
+        # apply Sp on site 0, state 0 -> state 1
+        act = apply(sh_site, "Sp", 0, UInt64(0))
+        @test act.valid == true
+        @test act.new_state == 1
+        @test isapprox(act.matrix_element, 1.0 + 0.0im)
+
+        # apply Sp on site 0, state 1 -> annihilated
+        act = apply(sh_site, "Sp", 0, UInt64(1))
+        @test act.valid == false
+
+        # apply Sx and Sy
+        act_x = apply(sh_site, "Sx", 0, UInt64(0))
+        @test act_x.valid == true && act_x.new_state == 1 && isapprox(act_x.matrix_element, 0.5)
+
+        act_y = apply(sh_site, "Sy", 0, UInt64(0))
+        @test act_y.valid == true && act_y.new_state == 1 && isapprox(act_y.matrix_element, 0.5im)
+
+        # Invalid operator throws ErrorException with diagnostic
+        @test_throws ErrorException apply(sh_site, "NONEXISTENT", 0, UInt64(0))
+
+        # SpinSSite (S=1)
+        s1_site = SpinSSite(1.0)
+        @test site_type(s1_site) == :SpinS
+        @test isapprox(spin(s1_site), 1.0)
+        @test dimension_per_site(s1_site) == 3
+        # S=1: state 0 (m_z=-1) + Sp -> state 1 (m_z=0), matrix element = sqrt(2)
+        act_s1 = apply(s1_site, "Sp", 0, UInt64(0))
+        @test act_s1.valid == true
+        @test act_s1.new_state == 1
+        @test isapprox(act_s1.matrix_element, sqrt(2.0) + 0.0im)
+
+        # FermionSite
+        ferm_site = FermionSite()
+        @test site_type(ferm_site) == :Fermion
+        @test dimension_per_site(ferm_site) == 2
+        act_c = apply(ferm_site, "C", 0, UInt64(1))
+        @test act_c.valid == true && act_c.new_state == 0 && isapprox(act_c.matrix_element, 1.0)
+
+        # 2. Basis Reflection
+        b_sh = SpinHalfBasis(4, sz=0.0)
+        @test basis_type(b_sh) == :SpinHalf
+        @test isapprox(spin(b_sh), 0.5)
+        @test dimension_per_site(b_sh) == 2
+        sec_b = sector(b_sh)
+        @test sec_b !== nothing
+        @test get_sz(sec_b) == 0
+
+        b_s1 = SpinSBasis(2, 1.0)
+        @test basis_type(b_s1) == :SpinS
+        @test isapprox(spin(b_s1), 1.0)
+        @test dimension_per_site(b_s1) == 3
+
+        b_ferm = FermionBasis(3)
+        @test basis_type(b_ferm) == :Fermion
+        @test dimension_per_site(b_ferm) == 2
+
+        # 3. OpSum Reflection
+        op = OpSum()
+        op += 2.5 * Sz(0)
+        op += (-1.0 + 0.5im) * Sp(0) * Sm(1)
+        @test length(op) == 2
+        @test opsum_size(op) == 2
+        @test size(op) == (2,)
+
+        # Term 0 inspection
+        c0, nfac0 = opsum_get_term_info(op, 0)
+        @test isapprox(c0, 2.5 + 0.0im)
+        @test nfac0 == 1
+        name0, site0 = opsum_get_factor(op, 0, 0)
+        @test name0 == "Sz"
+        @test site0 == 0
+
+        # Term 1 inspection
+        c1, nfac1 = opsum_get_term_info(op, 1)
+        @test isapprox(c1, -1.0 + 0.5im)
+        @test nfac1 == 2
+        name1_0, site1_0 = opsum_get_factor(op, 1, 0)
+        name1_1, site1_1 = opsum_get_factor(op, 1, 1)
+        @test name1_0 == "Sp" && site1_0 == 0
+        @test name1_1 == "Sm" && site1_1 == 1
+
+        # Indexing
+        @test op[1].coeff == 2.5 + 0.0im
+        @test op[2].factors == [("Sp", 0), ("Sm", 1)]
+    end
+
+    @testset "Kokkos Parallel Vector Operations" begin
+        # 1. Dot Product (Float64 & Float32)
+        x64 = ComplexF64[1+2im, 3+4im, -1, -2im, 2+1im]
+        y64 = ComplexF64[2-1im, 3im, 4+1im, 1-1im, -2]
+        @test isapprox(vector_dot(x64, y64), 6.0 + 7.0im)
+        @test vector_dot(ComplexF64[], ComplexF64[]) == 0.0 + 0.0im
+        @test_throws DimensionMismatch vector_dot(x64, y64[1:3])
+
+        x32 = ComplexF32.(x64)
+        y32 = ComplexF32.(y64)
+        @test isapprox(vector_dot(x32, y32), 6.0f0 + 7.0f0im)
+
+        # 2. Norm (Float64 & Float32)
+        @test isapprox(vector_norm(ComplexF64[3+4im, 0]), 5.0)
+        @test isapprox(vector_norm(ComplexF32[3+4im, 0]), 5.0f0)
+        @test vector_norm(ComplexF64[]) == 0.0
+
+        # 3. AXPY (Float64 & Float32)
+        ax = ComplexF64[1+1im, 2]
+        ay = ComplexF64[3-1im, 1+2im]
+        vector_axpy!(2.0, ax, ay)
+        @test isapprox(ay, ComplexF64[5+1im, 5+2im])
+        @test_throws DimensionMismatch vector_axpy!(2.0, ax, ay[1:1])
+
+        ax32 = ComplexF32[1+1im, 2]
+        ay32 = ComplexF32[3-1im, 1+2im]
+        vector_axpy!(2.0f0, ax32, ay32)
+        @test isapprox(ay32, ComplexF32[5+1im, 5+2im])
+
+        # 4. SCAL (Float64 & Float32)
+        sx64 = ComplexF64[2+3im, -1+4im]
+        vector_scal!(2im, sx64)
+        @test isapprox(sx64, ComplexF64[-6+4im, -8-2im])
+
+        sx32 = ComplexF32[2+3im, -1+4im]
+        vector_scal!(2.0f0im, sx32)
+        @test isapprox(sx32, ComplexF32[-6+4im, -8-2im])
+
+        # 5. Normalize (Float64 & Float32)
+        nx = ComplexF64[3, 4]
+        vector_normalize!(nx)
+        @test isapprox(vector_norm(nx), 1.0)
+        @test isapprox(nx, ComplexF64[0.6, 0.8])
+
+        # 6. Zero Fill
+        vector_zero_fill!(nx)
+        @test all(nx .== 0.0 + 0.0im)
+
+        # 7. Copy
+        c_src = ComplexF64[1+2im, 3-4im]
+        c_dst = zeros(ComplexF64, 2)
+        vector_copy!(c_dst, c_src)
+        @test c_dst == c_src
+        @test_throws DimensionMismatch vector_copy!(c_dst, ComplexF64[1])
+    end
+
+    @testset "DeviceVector & Zero-Copy GPU SpMV" begin
+        # 1. Allocation & Properties
+        dv64 = DeviceVector{Float64}(4)
+        @test length(dv64) == 4
+        @test size(dv64) == (4,)
+        @test eltype(dv64) == ComplexF64
+        @test pointer(dv64) != C_NULL
+        @test string(dv64) == "DeviceVector{Float64}(dim = 4)"
+
+        dv32 = DeviceVector{Float32}(4)
+        @test length(dv32) == 4
+        @test eltype(dv32) == ComplexF32
+        @test pointer(dv32) != C_NULL
+        @test string(dv32) == "DeviceVector{Float32}(dim = 4)"
+
+        @test_throws ArgumentError DeviceVector{Float64}(-1)
+
+        # 2. Staging Copies (Host <-> Device)
+        h64 = ComplexF64[1+0.5im, -2+1.5im, 0-1im, 3+2im]
+        dv_from_host = DeviceVector(h64)
+        @test length(dv_from_host) == 4
+        @test eltype(dv_from_host) == ComplexF64
+        @test Vector(dv_from_host) == h64
+
+        h32 = ComplexF32[1+0.5im, -2+1.5im, 0-1im, 3+2im]
+        dv_from_host32 = DeviceVector(h32)
+        @test Vector(dv_from_host32) == h32
+
+        copy_dst = zeros(ComplexF64, 4)
+        copyto!(copy_dst, dv_from_host)
+        @test copy_dst == h64
+        @test_throws DimensionMismatch copyto!(zeros(ComplexF64, 2), dv_from_host)
+        @test_throws DimensionMismatch copyto!(dv_from_host, zeros(ComplexF64, 2))
+
+        # 3. MatrixFreeHamiltonian Zero-Copy SpMV
+        b = SpinHalfBasis(2)
+        ops = OpSum()
+        ops += 1.0 * Sz(0) * Sz(1)
+        ops += 0.5 * Sp(0) * Sm(1)
+        ops += 0.5 * Sm(0) * Sp(1)
+
+        H64 = MatrixFreeHamiltonian{Float64}(b, ops)
+        H32 = MatrixFreeHamiltonian{Float32}(b, ops)
+
+        # Host SpMV reference
+        y_ref64 = H64 * h64
+        y_ref32 = H32 * h32
+
+        # Device SpMV (allocating *)
+        y_dev64 = H64 * dv_from_host
+        @test y_dev64 isa DeviceVector{Float64}
+        @test isapprox(Vector(y_dev64), y_ref64)
+
+        y_dev32 = H32 * dv_from_host32
+        @test y_dev32 isa DeviceVector{Float32}
+        @test isapprox(Vector(y_dev32), y_ref32)
+
+        # Device SpMV (in-place mul!)
+        y_dev_inplace64 = DeviceVector{Float64}(4)
+        mul!(y_dev_inplace64, H64, dv_from_host)
+        @test isapprox(Vector(y_dev_inplace64), y_ref64)
+
+        y_dev_inplace32 = DeviceVector{Float32}(4)
+        mul!(y_dev_inplace32, H32, dv_from_host32)
+        @test isapprox(Vector(y_dev_inplace32), y_ref32)
+
+        @test_throws DimensionMismatch H64 * DeviceVector{Float64}(8)
+        @test_throws DimensionMismatch mul!(DeviceVector{Float64}(8), H64, dv_from_host)
+
+        # 4. Device Diagonal
+        d_dev64 = diagonal_device(H64)
+        d_host64 = diagonal(H64)
+        @test isapprox(Vector(d_dev64), ComplexF64.(d_host64))
+
+        d_dev32 = diagonal_device(H32)
+        d_host32 = diagonal(H32)
+        @test isapprox(Vector(d_dev32), ComplexF32.(d_host32))
+
+        # 5. Device BLAS-1 Kernels
+        x_dev = DeviceVector(h64)
+        y_dev = DeviceVector(y_ref64)
+
+        # Dot
+        d_res = vector_dot(x_dev, y_dev)
+        @test isapprox(d_res, vector_dot(h64, y_ref64))
+        @test_throws DimensionMismatch vector_dot(x_dev, DeviceVector{Float64}(2))
+
+        # Norm
+        n_res = vector_norm(x_dev)
+        @test isapprox(n_res, vector_norm(h64))
+
+        # AXPY
+        vector_axpy!(2.0, x_dev, y_dev)
+        expected_axpy = 2.0 .* h64 .+ y_ref64
+        @test isapprox(Vector(y_dev), expected_axpy)
+
+        # SCAL
+        vector_scal!(0.5, y_dev)
+        @test isapprox(Vector(y_dev), 0.5 .* expected_axpy)
+
+        # Normalize
+        vector_normalize!(y_dev)
+        @test isapprox(vector_norm(y_dev), 1.0)
+
+        # Copy
+        y_clone = copy(y_dev)
+        @test isapprox(vector_norm(y_clone), 1.0)
+        @test Vector(y_clone) == Vector(y_dev)
+
+        # Zero Fill
+        vector_zero_fill!(y_clone)
+        @test isapprox(vector_norm(y_clone), 0.0)
+        @test all(Vector(y_clone) .== 0.0 + 0.0im)
+    end
 end
+
 

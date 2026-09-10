@@ -37,7 +37,7 @@ A modern C++20 framework for matrix-free Krylov methods in quantum many-body phy
 Automatically downloads and configures the latest native prebuilt binaries (`libqkrylov.so`, `libqkrylov.dylib`, or `qkrylov.dll`). On Linux systems with an NVIDIA GPU and driver 12+, it automatically downloads the **CUDA 12 accelerated** binary with zero manual compilation:
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/sjp95/qkrylov.git", rev="julia-release", subdir="bindings/julia")
+Pkg.add(url="https://github.com/sjp95/qkrylov.git", rev="julia-latest", subdir="bindings/julia")
 ```
 
 #### Option 2: Pin to a specific historical build

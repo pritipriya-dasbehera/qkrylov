@@ -19,12 +19,14 @@ option(QKRYLOV_BUILD_PYTHON "Build Python bindings" OFF)
 
 set(QKRYLOV_SOURCES
     src/basis/spinhalf_basis.cpp
+    src/basis/spin_s_basis.cpp
     src/basis/fermion_basis.cpp
     src/basis/hubbard_basis.cpp
     src/basis/tj_basis.cpp
     src/hamiltonian/matrix_free_hamiltonian.cpp
     src/operators/opsum.cpp
     src/sites/spinhalf_site.cpp
+    src/sites/spin_s_site.cpp
     src/sites/fermion_site.cpp
     src/sites/hubbard_site.cpp
     src/sites/tj_site.cpp
@@ -32,6 +34,7 @@ set(QKRYLOV_SOURCES
     src/solvers/davidson.cpp
     src/solvers/dynamics.cpp
     src/solvers/ftlm.cpp
+    src/solvers/correction_vector.cpp
 )
 
 add_library(qkrylov_fp32 OBJECT ${QKRYLOV_SOURCES})
@@ -44,8 +47,25 @@ target_compile_definitions(qkrylov_fp64 PUBLIC QKRYLOV_DOUBLE_PRECISION)
 target_compile_features(qkrylov_fp64 PUBLIC cxx_std_20)
 set_target_properties(qkrylov_fp64 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(qkrylov SHARED $<TARGET_OBJECTS:qkrylov_fp32> $<TARGET_OBJECTS:qkrylov_fp64> src/c_api.cpp)
+add_library(qkrylov_c_api_fp32 OBJECT src/c_api_fp32.cpp)
+target_compile_definitions(qkrylov_c_api_fp32 PUBLIC QKRYLOV_SINGLE_PRECISION)
+target_compile_features(qkrylov_c_api_fp32 PUBLIC cxx_std_20)
+set_target_properties(qkrylov_c_api_fp32 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+add_library(qkrylov_c_api_fp64 OBJECT src/c_api_fp64.cpp)
+target_compile_definitions(qkrylov_c_api_fp64 PUBLIC QKRYLOV_DOUBLE_PRECISION)
+target_compile_features(qkrylov_c_api_fp64 PUBLIC cxx_std_20)
+set_target_properties(qkrylov_c_api_fp64 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+add_library(qkrylov SHARED
+    $<TARGET_OBJECTS:qkrylov_fp32>
+    $<TARGET_OBJECTS:qkrylov_fp64>
+    $<TARGET_OBJECTS:qkrylov_c_api_fp32>
+    $<TARGET_OBJECTS:qkrylov_c_api_fp64>
+    src/c_api.cpp
+)
 add_library(qkrylov::qkrylov ALIAS qkrylov)
+target_compile_definitions(qkrylov PRIVATE QKRYLOV_DOUBLE_PRECISION)
 target_compile_features(qkrylov PUBLIC cxx_std_20)
 set_target_properties(qkrylov PROPERTIES 
     POSITION_INDEPENDENT_CODE ON
@@ -55,6 +75,9 @@ set_target_properties(qkrylov PROPERTIES
 if(MSVC)
     target_compile_definitions(qkrylov_fp32 PUBLIC _USE_MATH_DEFINES)
     target_compile_definitions(qkrylov_fp64 PUBLIC _USE_MATH_DEFINES)
+    target_compile_definitions(qkrylov_c_api_fp32 PUBLIC _USE_MATH_DEFINES)
+    target_compile_definitions(qkrylov_c_api_fp64 PUBLIC _USE_MATH_DEFINES)
+    target_compile_definitions(qkrylov PUBLIC _USE_MATH_DEFINES)
 endif()
 
 if(APPLE)
@@ -98,10 +121,14 @@ endif()
 
 target_link_libraries(qkrylov_fp32 PUBLIC Kokkos::kokkos)
 target_link_libraries(qkrylov_fp64 PUBLIC Kokkos::kokkos)
+target_link_libraries(qkrylov_c_api_fp32 PUBLIC Kokkos::kokkos)
+target_link_libraries(qkrylov_c_api_fp64 PUBLIC Kokkos::kokkos)
 target_link_libraries(qkrylov PUBLIC Kokkos::kokkos)
 
 target_include_directories(qkrylov_fp32 PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_include_directories(qkrylov_fp64 PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_include_directories(qkrylov_c_api_fp32 PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_include_directories(qkrylov_c_api_fp64 PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_include_directories(qkrylov PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 
 include(GNUInstallDirs)

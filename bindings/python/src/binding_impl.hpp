@@ -24,6 +24,9 @@
 #include "qkrylov/solvers/davidson.hpp"
 #include "qkrylov/solvers/dynamics.hpp"
 #include "qkrylov/solvers/ftlm.hpp"
+#include "qkrylov/basis/spin_s_basis.hpp"
+#include "qkrylov/sites/spin_s_site.hpp"
+#include "qkrylov/solvers/correction_vector.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -122,6 +125,23 @@ static void bind_backend(nb::module_& m, const std::string& suffix, const std::s
     std::string ftlm_name = "ftlm_" + suffix + type_suffix;
     m.def(ftlm_name.c_str(), &ftlm<ExecSpace>,
           "H"_a, "beta"_a, "n_random"_a = 50, "n_steps"_a = 100);
+
+    std::string cv_name = "correction_vector_spectral_" + suffix + type_suffix;
+    m.def(cv_name.c_str(),
+        [](const HType& H, CxArray op_psi0, Real E0, Real omega, Real eta, int max_iter, Real tol) {
+            if (op_psi0.shape(0) != static_cast<size_t>(H.dimension())) {
+                throw std::invalid_argument("op_psi0 vector size does not match Hamiltonian dimension");
+            }
+            const HostVector op_psi0_vec(op_psi0.data(), op_psi0.data() + op_psi0.shape(0));
+            auto res = correction_vector_spectral<ExecSpace>(H, op_psi0_vec, E0, omega, eta, max_iter, tol);
+            return nb::make_tuple(
+                vec_to_numpy(std::move(res.correction_vector)),
+                res.spectral_function,
+                res.iterations,
+                res.converged
+            );
+        },
+        "H"_a, "op_psi0"_a, "E0"_a, "omega"_a, "eta"_a = static_cast<Real>(0.1), "max_iter"_a = 500, "tol"_a = static_cast<Real>(1e-8));
 }
 
 static void bind_impl(nb::module_& m, const std::string& type_suffix) {
@@ -210,10 +230,25 @@ static void bind_impl(nb::module_& m, const std::string& type_suffix) {
         .def("contains", &TJBasis::contains)
         .def("nsites", &TJBasis::nsites);
 
+    nb::class_<SpinSBasis, Basis>(m, ("SpinSBasis" + type_suffix).c_str())
+        .def(nb::init<int, double, const Sector&>(), "N"_a, "S"_a = 0.5, "sector"_a = Sector())
+        .def("size", &SpinSBasis::size)
+        .def("state", &SpinSBasis::state)
+        .def("index", &SpinSBasis::index)
+        .def("contains", &SpinSBasis::contains)
+        .def("nsites", &SpinSBasis::nsites)
+        .def_prop_ro("spin", &SpinSBasis::spin)
+        .def_prop_ro("dimension_per_site", &SpinSBasis::dimension_per_site);
+
     nb::class_<Site>(m, ("Site" + type_suffix).c_str());
 
     nb::class_<SpinHalfSite, Site>(m, ("SpinHalfSite" + type_suffix).c_str())
         .def(nb::init<>());
+
+    nb::class_<SpinSSite, Site>(m, ("SpinSSite" + type_suffix).c_str())
+        .def(nb::init<double>(), "S"_a = 0.5)
+        .def_prop_ro("spin", &SpinSSite::spin)
+        .def_prop_ro("dimension_per_site", &SpinSSite::dimension_per_site);
 
     nb::class_<FermionSite, Site>(m, ("FermionSite" + type_suffix).c_str())
         .def(nb::init<>());
@@ -224,7 +259,16 @@ static void bind_impl(nb::module_& m, const std::string& type_suffix) {
     nb::class_<TJSite, Site>(m, ("TJSite" + type_suffix).c_str())
         .def(nb::init<>());
 
-    
+    nb::class_<CorrectionVectorResult>(m, ("CorrectionVectorResult" + type_suffix).c_str())
+        .def(nb::init<>())
+        .def_ro("spectral_function", &CorrectionVectorResult::spectral_function)
+        .def_ro("iterations", &CorrectionVectorResult::iterations)
+        .def_ro("converged", &CorrectionVectorResult::converged)
+        .def_prop_ro("correction_vector", [](const CorrectionVectorResult& self) {
+            std::vector<Complex> copy = self.correction_vector;
+            return vec_to_numpy(std::move(copy));
+        });
+
     nb::class_<DavidsonResult>(m, ("DavidsonResult" + type_suffix).c_str())
         .def_rw("eigenvalues", &DavidsonResult::eigenvalues)
         .def_rw("eigenvectors", &DavidsonResult::eigenvectors);

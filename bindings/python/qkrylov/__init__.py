@@ -11,8 +11,8 @@ from .operators import (
     Nup, Ndn, Nupdn,
     Bdag, B, N
 )
-from .site import Site, SpinHalfSite, FermionSite, HubbardSite, TJSite
-from .basis import Basis, SpinHalfBasis, FermionBasis, HubbardBasis, TJBasis
+from .site import Site, SpinHalfSite, SpinSSite, FermionSite, HubbardSite, TJSite
+from .basis import Basis, SpinHalfBasis, SpinSBasis, FermionBasis, HubbardBasis, TJBasis
 from .hamiltonian import MatrixFreeHamiltonian
 from .solvers import (
     LanczosResult,
@@ -24,7 +24,28 @@ from .solvers import (
     evaluate_spectral_function,
     FTLMResult,
     ftlm,
+    CorrectionVectorResult,
+    correction_vector,
+    correction_vector_spectral,
 )
+
+import os
+import site
+import glob
+import ctypes
+
+# Preload NVIDIA CUDA libraries from pip packages if they exist
+try:
+    for site_dir in site.getsitepackages():
+        cuda_libs = glob.glob(os.path.join(site_dir, "nvidia", "*", "lib"))
+        for lib_dir in cuda_libs:
+            for so_file in glob.glob(os.path.join(lib_dir, "*.so*")):
+                try:
+                    ctypes.CDLL(so_file, mode=os.RTLD_GLOBAL)
+                except OSError:
+                    pass
+except Exception:
+    pass
 
 from ._qkrylov_cpp import Device_FP32 as Device
 
@@ -59,6 +80,7 @@ __all__ = [
     # Sites
     "Site",
     "SpinHalfSite",
+    "SpinSSite",
     "FermionSite",
     "HubbardSite",
     "TJSite",
@@ -66,6 +88,7 @@ __all__ = [
     # Bases
     "Basis",
     "SpinHalfBasis",
+    "SpinSBasis",
     "FermionBasis",
     "HubbardBasis",
     "TJBasis",
@@ -83,6 +106,9 @@ __all__ = [
     "evaluate_spectral_function",
     "FTLMResult",
     "ftlm",
+    "CorrectionVectorResult",
+    "correction_vector",
+    "correction_vector_spectral",
     
     # Utilities
     "find_gpu",

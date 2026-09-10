@@ -1,5 +1,6 @@
 import numpy as np
 from typing import List, Tuple
+from dataclasses import dataclass
 from . import _qkrylov_cpp as _cpp
 from .hamiltonian import MatrixFreeHamiltonian
 
@@ -144,3 +145,90 @@ def ftlm(
     s_dtype = "_FP64" if H.dtype == np.float64 else "_FP32"
     res = getattr(_cpp, f"ftlm_{H._backend_suffix}{s_dtype}")(H._cpp_obj, beta, n_random, n_steps)
     return FTLMResult(res)
+
+
+@dataclass
+class CorrectionVectorResult:
+    """Result of a correction vector calculation.
+
+    Attributes
+    ----------
+    correction_vector : np.ndarray
+        The computed correction vector.
+    spectral_function : float
+        The computed spectral function value S(omega).
+    iterations : int
+        Number of conjugate gradient iterations.
+    converged : bool
+        Whether the solver converged within tolerance.
+    """
+    correction_vector: np.ndarray
+    spectral_function: float
+    iterations: int
+    converged: bool
+
+    def __iter__(self):
+        return iter((self.correction_vector, self.spectral_function, self.iterations, self.converged))
+
+    def __repr__(self) -> str:
+        return (
+            f"CorrectionVectorResult(spectral_function={self.spectral_function:.10e}, "
+            f"iterations={self.iterations}, converged={self.converged})"
+        )
+
+
+def correction_vector(
+    H: MatrixFreeHamiltonian,
+    op_psi0: np.ndarray,
+    E0: float,
+    omega: float,
+    eta: float = 0.1,
+    max_iter: int = 500,
+    tol: float = 1e-8
+) -> CorrectionVectorResult:
+    """Compute correction vector and spectral function using conjugate gradient.
+
+    Solves ((H - E0 - omega)^2 + eta^2) |Y> = eta * Op_psi0
+    and calculates S(omega) = (1/pi) * Re<Op_psi0 | Y>.
+
+    Parameters
+    ----------
+    H : MatrixFreeHamiltonian
+        The matrix-free Hamiltonian.
+    op_psi0 : np.ndarray
+        State vector after applying the excitation operator to the ground state.
+    E0 : float
+        Ground state energy.
+    omega : float
+        Frequency / energy transfer.
+    eta : float, optional
+        Broadening factor (default 0.1).
+    max_iter : int, optional
+        Maximum CG iterations (default 500).
+    tol : float, optional
+        CG convergence tolerance (default 1e-8).
+
+    Returns
+    -------
+    CorrectionVectorResult
+        Result containing correction_vector, spectral_function, iterations, converged.
+    """
+    s_dtype = "_FP64" if getattr(H, "dtype", np.float32) == np.float64 else "_FP32"
+    op_psi0 = np.ascontiguousarray(
+        op_psi0,
+        dtype=np.complex128 if getattr(H, "dtype", np.float32) == np.float64 else np.complex64
+    )
+    cv_func = getattr(_cpp, f"correction_vector_spectral_{H._backend_suffix}{s_dtype}")
+    corr_vec, spec_fn, iters, conv = cv_func(
+        H._cpp_obj, op_psi0, float(E0), float(omega), float(eta), int(max_iter), float(tol)
+    )
+    return CorrectionVectorResult(
+        correction_vector=corr_vec,
+        spectral_function=float(spec_fn),
+        iterations=int(iters),
+        converged=bool(conv)
+    )
+
+
+correction_vector_spectral = correction_vector
+
