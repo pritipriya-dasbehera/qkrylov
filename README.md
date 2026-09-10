@@ -17,7 +17,7 @@ A modern C++20 framework for matrix-free Krylov methods in quantum many-body phy
     - **t-J Models**: Doped antiferromagnets with no-double-occupancy constraint.
 - **Matrix-Free Hamiltonian**: Efficient application of operator sums (`OpSum`) to state vectors.
 - **Advanced Solvers**:
-    - **Lanczos**: Accurate ground-state energy, iterations/convergence tracking, and Ritz vector calculation.
+    - **Lanczos**: Ground-state (`lanczos_ground_state`) and multi-state (`lanczos_lowest`) eigensolvers with full reorthogonalization and Ritz vector reconstruction.
     - **Davidson**: Iterative solver for the lowest $k$ eigenpairs with convergence diagnostics.
     - **Dynamics**: Continued Fraction Lanczos for dynamical structure factor $S(\omega)$ calculations.
     - **Finite Temperature**: Finite Temperature Lanczos Method (FTLM) for thermodynamic quantities ($Z, E, C_v$).
@@ -153,6 +153,10 @@ println("Execution device:    ", target_device)
 println("Ground state energy: ", res.energy)
 println("Iterations executed: ", res.iterations)
 println("Convergence status:  ", res.converged)
+
+# Compute lowest 3 states stably using multi-state Lanczos
+res_multi = lanczos_lowest(H, n_eig=3, tol=1e-8)
+println("Lowest 3 energies:   ", res_multi.eigenvalues)
 ```
 
 ## Things To Be Done (Roadmap)

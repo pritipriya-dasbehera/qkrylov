@@ -10,6 +10,7 @@ set(QKRYLOV_TESTS
     test_fermion_site
     test_davidson
     test_lanczos_ritz
+    test_lanczos_lowest
     test_dynamics
     test_tj_basis
     test_tj_site

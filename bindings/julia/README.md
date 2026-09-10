@@ -17,6 +17,7 @@ The Julia interface is constructed directly on top of the binary-stable C ABI ex
   - [Matrix-Free Hamiltonian (`MatrixFreeHamiltonian`)](#matrix-free-hamiltonian-matrixfreehamiltonian)
   - [Solvers & Dynamics](#solvers--dynamics)
     - [Lanczos Ground State (`lanczos_ground_state`)](#lanczos-ground-state-lanczos_ground_state)
+    - [Multi-State Lanczos (`lanczos_lowest`)](#multi-state-lanczos-lanczos_lowest)
     - [Davidson Eigensolver (`davidson_lowest`)](#davidson-eigensolver-davidson_lowest)
     - [Continued-Fraction Dynamics & Spectral Functions](#continued-fraction-dynamics--spectral-functions)
     - [Finite Temperature Lanczos (`ftlm`)](#finite-temperature-lanczos-ftlm)
@@ -265,6 +266,35 @@ lanczos_ground_state(
   - `.energy`: Ground state energy (`Float64`).
   - `.state` or `.eigenvector`: Wavefunction vector (`Vector{ComplexF64}`). *Note*: Raises an explicit `ErrorException` if accessed when `return_state=false`.
 - **Destructuring**: Supports direct tuple assignment `energy, psi = lanczos_ground_state(H; return_state=true)`.
+
+---
+
+#### Multi-State Lanczos (`lanczos_lowest`)
+
+```julia
+lanczos_lowest(
+    H::MatrixFreeHamiltonian;
+    n_eig::Integer=1,
+    maxiter::Integer=200,
+    tol::Real=1e-8,
+    compute_eigenvectors::Bool=true
+)::LanczosLowestResult
+```
+
+- **Description**: Computes the lowest $k$ eigenvalues and orthonormal eigenvectors using the Lanczos algorithm with full reorthogonalization. Unlike diagonal preconditioner methods (such as unregularized Davidson), Lanczos has **zero preconditioner singularities** and stably resolves multiple low-lying states without runaway negative energy divergence.
+- **Arguments**:
+  - `H`: Target `MatrixFreeHamiltonian`.
+  - `n_eig`: Number of lowest eigenvalues to compute (default: `1`).
+  - `maxiter`: Maximum Lanczos iterations (default: `200`).
+  - `tol`: Convergence tolerance for Ritz residuals (default: `1e-8`).
+  - `compute_eigenvectors`: If `true`, reconstructs and returns Ritz eigenvectors (default: `true`).
+- **Return**: `LanczosLowestResult` struct:
+  - `.eigenvalues`: `Vector{Float64}` containing all $k$ lowest eigenvalues.
+  - `.eigenvectors`: `Vector{Vector{ComplexF64}}` containing the $k$ orthonormal Ritz eigenvectors (or `nothing` if `compute_eigenvectors=false`).
+  - `.energy`: Convenience alias to `.eigenvalues[1]`.
+  - `.state` / `.eigenvector`: Convenience alias to `.eigenvectors[1]`.
+  - `.iterations`: Number of Lanczos iterations executed.
+  - `.converged`: Boolean convergence status.
 
 ---
 

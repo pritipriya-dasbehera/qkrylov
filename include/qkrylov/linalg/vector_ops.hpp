@@ -11,13 +11,13 @@ namespace QKRYLOV_PRECISION_NAMESPACE {
 
 
 /// Compute the inner product <x|y> = sum_i conj(x_i) * y_i
-template <typename ViewType>
+template <typename ViewType1, typename ViewType2>
 inline KComplex dot(
-    const ViewType& x,
-    const ViewType& y
+    const ViewType1& x,
+    const ViewType2& y
 )
 {
-    using ExecSpace = typename ViewType::execution_space;
+    using ExecSpace = typename ViewType1::execution_space;
     KComplex result(0.0, 0.0);
 
     Kokkos::parallel_reduce("qkrylov::dot",
@@ -69,14 +69,14 @@ inline void scal(
 }
 
 /// AXPY: y = a*x + y
-template <typename ViewType>
+template <typename ViewType1, typename ViewType2>
 inline void axpy(
     KComplex a,
-    const ViewType& x,
-    ViewType& y
+    const ViewType1& x,
+    ViewType2& y
 )
 {
-    using ExecSpace = typename ViewType::execution_space;
+    using ExecSpace = typename ViewType2::execution_space;
     Kokkos::parallel_for("qkrylov::axpy",
         Kokkos::RangePolicy<ExecSpace>(0, x.extent(0)),
         KOKKOS_LAMBDA(const int i) {

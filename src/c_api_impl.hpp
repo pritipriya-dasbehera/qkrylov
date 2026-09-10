@@ -209,8 +209,8 @@ inline auto run_binary_read(uint64_t dim, const Scalar* x, const Scalar* y, Func
 template <typename Func>
 inline void run_binary_mut(uint64_t dim, const Scalar* x, Scalar* y, Func&& op) {
     using ExecSpace = Kokkos::DefaultExecutionSpace;
-    auto x_host = Kokkos::View<KComplex*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>(
-        const_cast<KComplex*>(reinterpret_cast<const KComplex*>(x)), dim);
+    auto x_host = Kokkos::View<const KComplex*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>(
+        reinterpret_cast<const KComplex*>(x), dim);
     auto y_host = Kokkos::View<KComplex*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>(
         reinterpret_cast<KComplex*>(y), dim);
     if constexpr (Kokkos::SpaceAccessibility<ExecSpace, Kokkos::HostSpace>::accessible) {
@@ -482,7 +482,7 @@ int SUFFIX(qkrylov_lanczos_ground_state)(
     Scalar tol,
     LanczosResT* result)
 {
-    return SUFFIX(qkrylov_lanczos_ground_state_complex)(h, maxiter, tol, result, nullptr);
+    return SUFFIX(qkrylov_lanczos_ground_state_complex)(h, maxiter, tol, result, nullptr, nullptr);
 }
 
 int SUFFIX(qkrylov_lanczos_ground_state_complex)(
@@ -490,7 +490,8 @@ int SUFFIX(qkrylov_lanczos_ground_state_complex)(
     int maxiter,
     Scalar tol,
     LanczosResT* result,
-    Scalar* eigenvector_complex)
+    Scalar* eigenvector_complex,
+    const Scalar* initial_vector_complex)
 {
     if (!h) {
         set_last_error("qkrylov_lanczos_ground_state_complex: hamiltonian handle is null");
@@ -510,7 +511,15 @@ int SUFFIX(qkrylov_lanczos_ground_state_complex)(
     }
     try {
         auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
-        auto res = lanczos_ground_state(*H, maxiter, static_cast<Real>(tol));
+        HostVector init_v;
+        if (initial_vector_complex) {
+            init_v.resize(h->dim);
+            for (uint64_t i = 0; i < h->dim; ++i) {
+                init_v[i] = Complex(static_cast<Real>(initial_vector_complex[2 * i]),
+                                    static_cast<Real>(initial_vector_complex[2 * i + 1]));
+            }
+        }
+        auto res = lanczos_ground_state(*H, maxiter, static_cast<Real>(tol), init_v);
         result->energy     = static_cast<Scalar>(res.energy);
         result->iterations = res.iterations;
         result->converged  = res.converged ? 1 : 0;
@@ -526,6 +535,79 @@ int SUFFIX(qkrylov_lanczos_ground_state_complex)(
         return QKRYLOV_ERROR_EXCEPTION;
     } catch (...) {
         set_last_error("Unknown exception in qkrylov_lanczos_ground_state_complex");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+int SUFFIX(qkrylov_lanczos_lowest_complex)(
+    qkrylov_hamiltonian_h h,
+    int n_eig,
+    int maxiter,
+    Scalar tol,
+    Scalar* eigenvalues_out,
+    Scalar* eigenvectors_complex_out,
+    qkrylov_lanczos_lowest_result_c_t* result_info,
+    const Scalar* initial_vector_complex)
+{
+    if (!h) {
+        set_last_error("qkrylov_lanczos_lowest_complex: hamiltonian handle is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (h->precision != PREC_ID) {
+        set_last_error("qkrylov_lanczos_lowest_complex: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (!h->impl || !eigenvalues_out) {
+        set_last_error("qkrylov_lanczos_lowest_complex: null eigenvalues output pointer or uninitialized hamiltonian");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (n_eig <= 0) {
+        set_last_error("qkrylov_lanczos_lowest_complex: n_eig must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (maxiter <= 0) {
+        set_last_error("qkrylov_lanczos_lowest_complex: maxiter must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    try {
+        auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
+        bool compute_evecs = (eigenvectors_complex_out != nullptr);
+        HostVector init_v;
+        if (initial_vector_complex) {
+            init_v.resize(h->dim);
+            for (uint64_t i = 0; i < h->dim; ++i) {
+                init_v[i] = Complex(static_cast<Real>(initial_vector_complex[2 * i]),
+                                    static_cast<Real>(initial_vector_complex[2 * i + 1]));
+            }
+        }
+        auto res = lanczos_lowest(*H, n_eig, maxiter, static_cast<Real>(tol), compute_evecs, init_v);
+        const size_t k = std::min(static_cast<size_t>(n_eig), res.eigenvalues.size());
+        for (size_t i = 0; i < k; ++i) {
+            eigenvalues_out[i] = static_cast<Scalar>(res.eigenvalues[i]);
+        }
+
+        if (result_info) {
+            result_info->iterations = res.iterations;
+            result_info->converged  = res.converged ? 1 : 0;
+        }
+
+        if (compute_evecs) {
+            const uint64_t dim = h->dim;
+            for (size_t idx = 0; idx < k && idx < res.eigenvectors.size(); ++idx) {
+                const auto& vec = res.eigenvectors[idx];
+                Scalar* dst = eigenvectors_complex_out + (idx * 2 * dim);
+                for (size_t i = 0; i < dim && i < vec.size(); ++i) {
+                    dst[2 * i]     = static_cast<Scalar>(vec[i].real());
+                    dst[2 * i + 1] = static_cast<Scalar>(vec[i].imag());
+                }
+            }
+        }
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_lanczos_lowest_complex");
         return QKRYLOV_ERROR_EXCEPTION;
     }
 }
