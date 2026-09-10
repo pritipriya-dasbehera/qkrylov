@@ -317,6 +317,47 @@ E0, psi0 = lanczos_ground_state(H, return_state=true)
 
 ---
 
+### 5.1b Multi-State Low-Lying Eigensolver (`lanczos_lowest`)
+
+#### How to use `lanczos_lowest`
+
+```julia
+# Compute lowest 3 eigenvalues and eigenvectors using Lanczos with full reorthogonalization
+res_lz = lanczos_lowest(H, n_eig=3, maxiter=200, tol=1e-8)
+println(res_lz)
+# Outputs: LanczosLowestResult(n_eig = 3, energies = [-2.0, -1.0, -1.0], iterations = 14, converged = true, has_eigenvectors = true)
+
+energies = res_lz.eigenvalues   # Vector{Float64} of length 3
+states   = res_lz.eigenvectors  # Vector{Vector{ComplexF64}} of length 3
+n_iters  = res_lz.iterations    # Iteration count
+is_conv  = res_lz.converged     # Convergence boolean flag
+
+# Ground state convenience aliases:
+E0       = res_lz.energy        # Same as res_lz.eigenvalues[1]
+psi0     = res_lz.state         # Same as res_lz.eigenvectors[1]
+```
+
+#### Why use `lanczos_lowest` over `davidson_lowest`?
+- **Zero Preconditioner Singularities**: Davidson uses a diagonal preconditioner $\delta_i[j] = \frac{r_i[j]}{D_{jj} - \theta_i}$. When computing excited states inside the diagonal spectrum band $[-1.06, +1.06]$, $D_{jj} - \theta_i \approx 0$ causes numerical explosion and runaway divergence.
+- **Full Reorthogonalization**: `lanczos_lowest` applies full reorthogonalization to prevent ghost eigenvalues, producing monotonically converging Ritz pairs without any matrix inversions.
+
+#### `lanczos_lowest` Parameters & Result API
+
+| Parameter / Property | Type | Default Value | Description |
+| :--- | :--- | :--- | :--- |
+| `n_eig` | `Integer` | `1` | Number of lowest eigenvalues to compute. |
+| `maxiter` | `Integer` | `200` | Maximum Lanczos iterations. |
+| `tol` | `Real` | `1e-8` | Convergence tolerance for Ritz residuals. |
+| `compute_eigenvectors` | `Bool` | `true` | When `true`, computes eigenvector array. |
+| `res.eigenvalues` | `Vector{Float64}` | - | Vector of $k$ lowest energy eigenvalues. |
+| `res.iterations` | `Int` | - | Number of Lanczos iterations executed. |
+| `res.converged` | `Bool` | - | `true` if all $k$ eigenpairs converged within tolerance. |
+| `res.eigenvectors` | `Vector{Vector{ComplexF64}}` | - | Array of $k$ eigenvector state vectors. |
+| `res.energy` | `Float64` | - | Ground state energy alias (`res.eigenvalues[1]`). |
+| `res.state` / `res.eigenvector` | `Vector{ComplexF64}` | - | Ground state eigenvector alias (`res.eigenvectors[1]`). |
+
+---
+
 ### 5.2 Low-Lying Excited States (`davidson_lowest`)
 
 #### How to use `davidson_lowest`

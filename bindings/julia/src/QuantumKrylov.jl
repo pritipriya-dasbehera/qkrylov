@@ -25,6 +25,7 @@ export validate, validate!
 export MatrixFreeHamiltonian, diagonal, diagonal_device
 export DeviceVector, mul!
 export lanczos_ground_state, LanczosResult
+export lanczos_lowest, LanczosLowestResult
 export davidson_lowest, DavidsonResult
 export continued_fraction_coeffs, ContinuedFractionResult, evaluate_spectral_function
 export ftlm, FTLMResult

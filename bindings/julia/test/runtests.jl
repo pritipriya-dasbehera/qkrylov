@@ -189,6 +189,18 @@ using QuantumKrylov
         E0, psi_destruct = lanczos_ground_state(H, return_state=true)
         @test isapprox(E0, -2.0, atol=1e-6)
         @test length(psi_destruct) == 16
+
+        # 6. Initial trial vector (warm start)
+        res_init = lanczos_ground_state(H, initial_vector=psi_destruct, return_state=true)
+        @test isapprox(res_init.energy, -2.0, atol=1e-6)
+        @test res_init.converged == true
+        @test res_init.iterations <= 2
+
+        # 7. Initial vector dimension mismatch
+        @test_throws DimensionMismatch lanczos_ground_state(H, initial_vector=zeros(ComplexF64, 10))
+
+        # 8. Initial vector zero-norm error
+        @test_throws ErrorException lanczos_ground_state(H, initial_vector=zeros(ComplexF64, 16))
     end
 
     @testset "Davidson Solver" begin
@@ -210,6 +222,38 @@ using QuantumKrylov
         @test res.eigenvectors !== nothing
         @test length(res.eigenvectors) == 2
         @test length(res.eigenvectors[1]) == 16
+    end
+
+    @testset "Lanczos Lowest Multi-State Solver" begin
+        N = 4
+        basis = SpinHalfBasis(N)
+        site = SpinHalfSite()
+        op = OpSum()
+        for i in 0:(N-1)
+            next_i = mod(i + 1, N)
+            add_term!(op, 1.0, "Sz", i, "Sz", next_i)
+            add_term!(op, 0.5, "Sp", i, "Sm", next_i)
+            add_term!(op, 0.5, "Sm", i, "Sp", next_i)
+        end
+        H = MatrixFreeHamiltonian(basis, site, op)
+
+        res = lanczos_lowest(H, n_eig=3, maxiter=50, tol=1e-6)
+        @test length(res.eigenvalues) == 3
+        @test isapprox(res.eigenvalues[1], -2.0, atol=1e-5)
+        @test res.eigenvalues[1] <= res.eigenvalues[2] <= res.eigenvalues[3]
+        @test res.eigenvectors !== nothing
+        @test length(res.eigenvectors) == 3
+        @test length(res.eigenvectors[1]) == 16
+
+        # Test convenience accessors
+        @test isapprox(res.energy, -2.0, atol=1e-5)
+        @test length(res.state) == 16
+
+        # Test initial trial vector
+        res_init = lanczos_lowest(H, n_eig=2, maxiter=50, tol=1e-6, initial_vector=res.state)
+        @test isapprox(res_init.eigenvalues[1], -2.0, atol=1e-5)
+        @test res_init.converged == true
+        @test_throws DimensionMismatch lanczos_lowest(H, n_eig=2, initial_vector=zeros(ComplexF64, 5))
     end
 
     @testset "Dynamics & Spectral Function" begin
@@ -361,9 +405,23 @@ using QuantumKrylov
         res32 = lanczos_ground_state(H32, maxiter=50, tol=1e-6, return_state=true)
         @test res32.energy isa Float32
         @test isapprox(res32.energy, Float32(-1.6160254), atol=1e-4)
-        @test res32.converged == true || res32.iterations == dimension(H32)
+        @test res32.converged == true
         @test eltype(res32.state) === ComplexF32
+
+        # FP32 initial vector
+        res32_warm = lanczos_ground_state(H32, initial_vector=res32.state, return_state=true)
+        @test isapprox(res32_warm.energy, Float32(-1.6160254), atol=1e-4)
+        @test res32_warm.iterations <= 2
+
         # 3. Solvers with FP64 & FP32
+        lz64 = lanczos_lowest(H64, n_eig=2, maxiter=50, tol=1e-10)
+        @test eltype(lz64.eigenvalues) === Float64
+        @test isapprox(lz64.eigenvalues[1], res64.energy, atol=1e-10)
+
+        lz32 = lanczos_lowest(H32, n_eig=2, maxiter=50, tol=1e-5)
+        @test eltype(lz32.eigenvalues) === Float32
+        @test isapprox(lz32.eigenvalues[1], res32.energy, atol=1e-4)
+
         dav64 = davidson_lowest(H64, n_eig=2, max_subspace=10, tol=1e-10)
         @test eltype(dav64.eigenvalues) === Float64
         @test isapprox(dav64.eigenvalues[1], res64.energy, atol=1e-10)

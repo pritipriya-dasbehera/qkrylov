@@ -314,7 +314,7 @@ int main() {
     // Test Lanczos Ground State Solver via FP64 C API (random start with nullptr)
     qkrylov_lanczos_result_c_t lanczos_res;
     std::vector<std::complex<double>> psi_cx(dim);
-    int solver_res = qkrylov_lanczos_ground_state_complex(H, 200, 1e-12, &lanczos_res, reinterpret_cast<double*>(psi_cx.data()));
+    int solver_res = qkrylov_lanczos_ground_state_complex(H, 200, 1e-12, &lanczos_res, reinterpret_cast<double*>(psi_cx.data()), nullptr);
     assert(solver_res == QKRYLOV_SUCCESS);
     assert(lanczos_res.converged == 1);
 
@@ -328,6 +328,25 @@ int main() {
         norm_sq += std::norm(psi_cx[i]);
     }
     assert(std::abs(norm_sq - 1.0) < 1e-12);
+
+    // Test Lanczos with warm initial trial vector (pass exact ground state, should converge in <= 2 iterations)
+    qkrylov_lanczos_result_c_t lanczos_warm_res;
+    std::vector<std::complex<double>> psi_cx_warm(dim);
+    int warm_res = qkrylov_lanczos_ground_state_complex(H, 200, 1e-12, &lanczos_warm_res,
+        reinterpret_cast<double*>(psi_cx_warm.data()), reinterpret_cast<const double*>(psi_cx.data()));
+    assert(warm_res == QKRYLOV_SUCCESS);
+    assert(lanczos_warm_res.converged == 1);
+    assert(lanczos_warm_res.iterations <= 2);
+    assert(std::abs(lanczos_warm_res.energy - lanczos_res.energy) < 1e-10);
+
+    // Test Lanczos with invalid zero-norm initial vector (should fail with QKRYLOV_ERROR_EXCEPTION)
+    std::vector<std::complex<double>> zero_v(dim, 0.0);
+    qkrylov_lanczos_result_c_t lz_zero_res;
+    int zero_status = qkrylov_lanczos_ground_state_complex(H, 50, 1e-6, &lz_zero_res, nullptr, reinterpret_cast<const double*>(zero_v.data()));
+    assert(zero_status == QKRYLOV_ERROR_EXCEPTION);
+    const char* zero_err_msg = qkrylov_get_last_error_message();
+    assert(strstr(zero_err_msg, "zero norm") != nullptr);
+    qkrylov_clear_last_error();
 
     // Test Davidson Solver via FP64 C API (Lowest 2 Eigenpairs)
     int n_eig = 2;
@@ -352,6 +371,24 @@ int main() {
             assert(std::abs(Hvk[i] - expected) < 1e-8);
         }
     }
+
+    // Test Lanczos Lowest Multi-State Solver (FP64)
+    int n_eig_lz = 3;
+    std::vector<double> lz_evals(n_eig_lz);
+    std::vector<std::complex<double>> lz_evecs(n_eig_lz * dim);
+    qkrylov_lanczos_lowest_result_c_t lz_info;
+    int lz_status = qkrylov_lanczos_lowest_complex(H, n_eig_lz, 100, 1e-10, lz_evals.data(), reinterpret_cast<double*>(lz_evecs.data()), &lz_info, nullptr);
+    assert(lz_status == QKRYLOV_SUCCESS);
+    assert(lz_info.converged == 1);
+    assert(std::abs(lz_evals[0] - lanczos_res.energy) < 1e-10);
+    assert(lz_evals[0] <= lz_evals[1] && lz_evals[1] <= lz_evals[2]);
+
+    // Test Lanczos Lowest with initial trial vector
+    int lz_status_warm = qkrylov_lanczos_lowest_complex(H, n_eig_lz, 100, 1e-10, lz_evals.data(),
+        reinterpret_cast<double*>(lz_evecs.data()), &lz_info, reinterpret_cast<const double*>(psi_cx.data()));
+    assert(lz_status_warm == QKRYLOV_SUCCESS);
+    assert(lz_info.converged == 1);
+    assert(std::abs(lz_evals[0] - lanczos_res.energy) < 1e-10);
 
     // Test Dynamics & Spectral Function (FP64)
     int n_iter = 20;
@@ -404,11 +441,20 @@ int main() {
     // Test Lanczos Ground State (FP32)
     qkrylov_lanczos_result_fp32_t lanczos_res32;
     std::vector<std::complex<float>> psi_cx32(dim);
-    int solver_res32 = qkrylov_lanczos_ground_state_complex_fp32(H32, 200, 1e-5f, &lanczos_res32, reinterpret_cast<float*>(psi_cx32.data()));
+    int solver_res32 = qkrylov_lanczos_ground_state_complex_fp32(H32, 200, 1e-5f, &lanczos_res32, reinterpret_cast<float*>(psi_cx32.data()), nullptr);
     assert(solver_res32 == QKRYLOV_SUCCESS);
+    assert(lanczos_res32.converged == 1);
     std::cout << "C API Lanczos FP32 Ground State Energy: " << lanczos_res32.energy << std::endl;
-    assert(lanczos_res32.converged == 1 || lanczos_res32.iterations == static_cast<int>(dim));
     assert(std::abs(lanczos_res32.energy - (-1.6160254038f)) < 1e-4f);
+
+    // Test Multi-State Lanczos (FP32)
+    std::vector<float> lz_evals32(n_eig_lz);
+    std::vector<std::complex<float>> lz_evecs32(n_eig_lz * dim);
+    qkrylov_lanczos_lowest_result_c_t lz_info32;
+    int lz_status32 = qkrylov_lanczos_lowest_complex_fp32(H32, n_eig_lz, 100, 1e-5f, lz_evals32.data(), reinterpret_cast<float*>(lz_evecs32.data()), &lz_info32, nullptr);
+    assert(lz_status32 == QKRYLOV_SUCCESS);
+    assert(lz_info32.converged == 1);
+    assert(std::abs(lz_evals32[0] - lanczos_res32.energy) < 1e-4f);
 
     // Test Davidson Lowest (FP32)
     std::vector<float> dav_evals32(n_eig);
@@ -463,7 +509,7 @@ int main() {
     qkrylov_lanczos_result_c_t lanczos_s1_res;
     std::vector<std::complex<double>> psi0_s1(dim_s1);
     int gs_status = qkrylov_lanczos_ground_state_complex(
-        H_s1, 200, 1e-10, &lanczos_s1_res, reinterpret_cast<double*>(psi0_s1.data())
+        H_s1, 200, 1e-10, &lanczos_s1_res, reinterpret_cast<double*>(psi0_s1.data()), nullptr
     );
     assert(gs_status == QKRYLOV_SUCCESS);
     assert(lanczos_s1_res.converged == 1);

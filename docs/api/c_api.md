@@ -369,17 +369,22 @@ typedef struct {
 
 /* FP64 Endpoints (Default) */
 int qkrylov_lanczos_ground_state_fp64(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_fp64_t* result);
-int qkrylov_lanczos_ground_state_complex_fp64(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_fp64_t* result, double* eigenvector_complex);
+int qkrylov_lanczos_ground_state_complex_fp64(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_fp64_t* result, double* eigenvector_complex, const double* initial_vector_complex);
 int qkrylov_lanczos_ground_state(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_c_t* result);
-int qkrylov_lanczos_ground_state_complex(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_c_t* result, double* eigenvector_complex);
+int qkrylov_lanczos_ground_state_complex(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_c_t* result, double* eigenvector_complex, const double* initial_vector_complex);
 
 /* FP32 Endpoints */
 int qkrylov_lanczos_ground_state_fp32(qkrylov_hamiltonian_h h, int maxiter, float tol, qkrylov_lanczos_result_fp32_t* result);
-int qkrylov_lanczos_ground_state_complex_fp32(qkrylov_hamiltonian_h h, int maxiter, float tol, qkrylov_lanczos_result_fp32_t* result, float* eigenvector_complex);
+int qkrylov_lanczos_ground_state_complex_fp32(qkrylov_hamiltonian_h h, int maxiter, float tol, qkrylov_lanczos_result_fp32_t* result, float* eigenvector_complex, const float* initial_vector_complex);
 ```
 
-#### `qkrylov_davidson_lowest_complex`
+#### `qkrylov_lanczos_lowest_complex` & `qkrylov_davidson_lowest_complex`
 ```c
+/* Multi-state Lanczos */
+int qkrylov_lanczos_lowest_complex_fp64(qkrylov_hamiltonian_h h, int n_eig, int maxiter, double tol, double* eigenvalues_out, double* eigenvectors_complex_out, qkrylov_lanczos_lowest_result_c_t* result_info, const double* initial_vector_complex);
+int qkrylov_lanczos_lowest_complex_fp32(qkrylov_hamiltonian_h h, int n_eig, int maxiter, float tol, float* eigenvalues_out, float* eigenvectors_complex_out, qkrylov_lanczos_lowest_result_c_t* result_info, const float* initial_vector_complex);
+int qkrylov_lanczos_lowest_complex(qkrylov_hamiltonian_h h, int n_eig, int maxiter, double tol, double* eigenvalues_out, double* eigenvectors_complex_out, qkrylov_lanczos_lowest_result_c_t* result_info, const double* initial_vector_complex);
+
 /* Subspace Davidson */
 int qkrylov_davidson_lowest_complex_fp64(qkrylov_hamiltonian_h h, int n_eig, int max_subspace, double tol, double* eigenvalues_out, double* eigenvectors_complex_out, qkrylov_davidson_result_c_t* result_info);
 int qkrylov_davidson_lowest_complex_fp32(qkrylov_hamiltonian_h h, int n_eig, int max_subspace, float tol, float* eigenvalues_out, float* eigenvectors_complex_out, qkrylov_davidson_result_c_t* result_info);
