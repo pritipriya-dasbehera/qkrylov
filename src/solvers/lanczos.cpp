@@ -7,6 +7,7 @@
 #include <vector>
 #include <iostream>
 #include <cmath>
+#include <limits>
 #include <Kokkos_Core.hpp>
 
 namespace qkrylov {
@@ -32,10 +33,12 @@ TridiagResult tridiag_ground_state_full(const std::vector<Real>& alpha, const st
     std::vector<std::vector<Real>> z(n, std::vector<Real>(n, 0.0));
     for (int i = 0; i < n; ++i) z[i][i] = 1.0;
 
+    const Real eps = std::numeric_limits<Real>::epsilon() * Real(4.0);
+
     for (int iter = 0; iter < 1000; ++iter) {
         for (int i = 0; i < n - 1; ++i) {
-            if (std::abs(e[i]) < 1e-14 * (std::abs(d[i]) + std::abs(d[i+1]))) {
-                e[i] = 0.0;
+            if (std::abs(e[i]) <= eps * (std::abs(d[i]) + std::abs(d[i+1]))) {
+                e[i] = Real(0.0);
             }
         }
 
@@ -146,8 +149,9 @@ QKRYLOV_PRECISION_NAMESPACE::LanczosResult lanczos(
     std::vector<Real> alphas;
     std::vector<Real> betas;
 
+    const Real mach_eps = std::numeric_limits<Real>::epsilon() * Real(4.0);
     bool is_converged = false;
-    Real energy_old = 1e100;
+    Real energy_old = std::numeric_limits<Real>::infinity();
     int actual_iters = 0;
 
     for(int iter=0; iter < std::min<int>(maxiter, dim); ++iter)
@@ -172,7 +176,7 @@ QKRYLOV_PRECISION_NAMESPACE::LanczosResult lanczos(
 
         Real beta = norm(w);
 
-        if (beta < 1e-15) {
+        if (beta < mach_eps) {
              is_converged = true;
              break;
         }

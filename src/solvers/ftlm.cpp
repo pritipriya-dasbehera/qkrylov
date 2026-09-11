@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <Kokkos_Core.hpp>
 
 namespace qkrylov {
@@ -33,6 +34,8 @@ Tridiag compute_tridiag(const MatrixFreeHamiltonian<ExecSpace>& H, const VectorV
     VectorView<ExecSpace> w("w", dim);
     Tridiag res;
 
+    const Real mach_eps = std::numeric_limits<Real>::epsilon() * Real(4.0);
+
     for (int i = 0; i < n_steps; ++i) {
         H.apply(v_curr, w);
         Real alpha = dot(v_curr, w).real();
@@ -42,7 +45,7 @@ Tridiag compute_tridiag(const MatrixFreeHamiltonian<ExecSpace>& H, const VectorV
         if (i > 0) axpy(-res.betas.back(), v_prev, w);
 
         Real beta = norm(w);
-        if (beta < 1e-15) break;
+        if (beta < mach_eps) break;
         res.betas.push_back(beta);
 
         Kokkos::deep_copy(v_prev, v_curr);
@@ -69,9 +72,11 @@ FullTridiagResult diagonalize_tridiag_components(const std::vector<Real>& alpha,
     std::vector<std::vector<Real>> z(n, std::vector<Real>(n, 0.0));
     for (int i = 0; i < n; ++i) z[i][i] = 1.0;
 
+    const Real eps = std::numeric_limits<Real>::epsilon() * Real(4.0);
+
     for (int iter = 0; iter < 1000; ++iter) {
         for (int i = 0; i < n - 1; ++i) {
-            if (std::abs(e[i]) < 1e-14 * (std::abs(d[i]) + std::abs(d[i+1]))) e[i] = 0.0;
+            if (std::abs(e[i]) <= eps * (std::abs(d[i]) + std::abs(d[i+1]))) e[i] = Real(0.0);
         }
         int m = n - 1;
         while (m > 0 && e[m-1] == 0.0) m--;

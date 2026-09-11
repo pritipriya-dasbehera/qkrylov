@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <complex>
+#include <limits>
 #include <Kokkos_Core.hpp>
 
 namespace qkrylov {
@@ -22,8 +23,9 @@ DynamicsResult continued_fraction_coeffs(
     VectorView<ExecSpace> dev_phi0("dev_phi0", dim);
     copy_host_to_device(phi0, dev_phi0);
 
+    const Real mach_eps = std::numeric_limits<Real>::epsilon() * Real(4.0);
     Real norm_phi = norm(dev_phi0);
-    if (norm_phi < 1e-15) return { {}, {}, 0.0 };
+    if (norm_phi < mach_eps) return { {}, {}, 0.0 };
 
     VectorView<ExecSpace> v_curr("v_curr", dim);
     Kokkos::deep_copy(v_curr, dev_phi0);
@@ -47,7 +49,7 @@ DynamicsResult continued_fraction_coeffs(
         }
 
         Real beta = norm(w);
-        if (beta < 1e-15) break;
+        if (beta < mach_eps) break;
 
         res.betas.push_back(beta);
         Kokkos::deep_copy(v_prev, v_curr);
