@@ -168,9 +168,11 @@ QKRYLOV_PRECISION_NAMESPACE::LanczosResult lanczos(
         }
 
         if constexpr (!is_two_pass) {
-            // Full reorthogonalization to maintain stability
-            for (const auto& bv : basis_vectors) {
-                axpy(-dot(bv, w), bv, w);
+            // DGKS full reorthogonalization ("twice is enough") to maintain stability to machine precision
+            for (int pass = 0; pass < 2; ++pass) {
+                for (const auto& bv : basis_vectors) {
+                    axpy(-dot(bv, w), bv, w);
+                }
             }
         }
 

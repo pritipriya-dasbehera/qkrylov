@@ -4,6 +4,7 @@
 
 #include <stdexcept>
 #include <vector>
+#include <algorithm>
 
 namespace qkrylov {
 namespace QKRYLOV_PRECISION_NAMESPACE {
@@ -42,8 +43,12 @@ MatrixFreeHamiltonian<ExecSpace>::MatrixFreeHamiltonian(
     h_col_indices.reserve(dim * ops_.size());
     h_values.reserve(dim * ops_.size());
 
+    std::vector<std::pair<Index, KComplex>> row_entries;
+    row_entries.reserve(ops_.size());
+
     for (Index alpha = 0; alpha < dim; ++alpha) {
         h_row_offsets[alpha] = h_col_indices.size();
+        row_entries.clear();
         const StateID initial_state = basis_->state(alpha);
 
         for (const auto& term : ops_.terms()) {
@@ -80,12 +85,32 @@ MatrixFreeHamiltonian<ExecSpace>::MatrixFreeHamiltonian(
             // with no atomics (each thread writes only to its own y element).
             KComplex val(amp.real(), -amp.imag());  // conj(amp)
 
-            h_col_indices.push_back(beta);
-            h_values.push_back(val);
+            row_entries.emplace_back(beta, val);
+        }
 
-            // Accumulate diagonal
-            if (beta == alpha) {
-                h_diagonal[alpha] += val;
+        if (!row_entries.empty()) {
+            std::sort(row_entries.begin(), row_entries.end(),
+                [](const auto& a, const auto& b) {
+                    return a.first < b.first;
+                });
+
+            for (size_t k = 0; k < row_entries.size(); ) {
+                Index col = row_entries[k].first;
+                KComplex sum_val = row_entries[k].second;
+                size_t next = k + 1;
+                while (next < row_entries.size() && row_entries[next].first == col) {
+                    sum_val += row_entries[next].second;
+                    ++next;
+                }
+
+                h_col_indices.push_back(col);
+                h_values.push_back(sum_val);
+
+                // Accumulate diagonal
+                if (col == alpha) {
+                    h_diagonal[alpha] = sum_val;
+                }
+                k = next;
             }
         }
     }
@@ -147,9 +172,6 @@ void MatrixFreeHamiltonian<ExecSpace>::apply(
     auto rows = row_offsets_;
     auto cols = col_indices_;
     auto vals = values_;
-
-    // Zero the output vector
-    Kokkos::deep_copy(ExecSpace(), y, KComplex(0.0, 0.0));
 
     // Gather-based SpMV:  y[alpha] = sum_j vals[j] * x[cols[j]]
     // Each thread owns its y[alpha] — no atomics needed.
