@@ -87,7 +87,8 @@ Real evaluate_spectral_function(
         }
     }
 
-    return -1.0 / M_PI * std::imag(norm_phi0 * norm_phi0 * f);
+    constexpr Real PI = static_cast<Real>(3.141592653589793238462643383279502884L);
+    return -static_cast<Real>(1.0) / PI * std::imag(norm_phi0 * norm_phi0 * f);
 }
 
 
