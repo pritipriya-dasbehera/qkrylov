@@ -117,6 +117,10 @@ private:
 
     VectorView<ExecSpace> diagonal_;  // size = dim
 
+    // Cached scratch device views for host apply(const Complex*, Complex*)
+    mutable VectorView<ExecSpace> scratch_x_;
+    mutable VectorView<ExecSpace> scratch_y_;
+
     // ---- Original objects (kept for reference/future use) ----
     std::shared_ptr<Basis> basis_;
     std::shared_ptr<Site>  site_;

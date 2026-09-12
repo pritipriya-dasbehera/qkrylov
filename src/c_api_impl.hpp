@@ -121,8 +121,14 @@ inline std::shared_ptr<Basis> get_or_create_basis(const qkrylov_basis_t& b) {
     if (b.ptr64) {
         return std::static_pointer_cast<Basis>(b.ptr64);
     }
+    if (b.ptr32) {
+        auto ptr = std::static_pointer_cast<Basis>(b.ptr32);
+        b.ptr64 = ptr;
+        return ptr;
+    }
     auto ptr = make_basis_from_descriptor(b);
     b.ptr64 = ptr;
+    b.ptr32 = ptr;
     if (ptr) b.cached_dim = ptr->size();
     return ptr;
 }
@@ -139,8 +145,14 @@ inline std::shared_ptr<Basis> get_or_create_basis(const qkrylov_basis_t& b) {
     if (b.ptr32) {
         return std::static_pointer_cast<Basis>(b.ptr32);
     }
+    if (b.ptr64) {
+        auto ptr = std::static_pointer_cast<Basis>(b.ptr64);
+        b.ptr32 = ptr;
+        return ptr;
+    }
     auto ptr = make_basis_from_descriptor(b);
     b.ptr32 = ptr;
+    b.ptr64 = ptr;
     if (ptr) b.cached_dim = ptr->size();
     return ptr;
 }

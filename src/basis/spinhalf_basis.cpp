@@ -6,7 +6,6 @@
 #include <algorithm>
 
 namespace qkrylov {
-namespace QKRYLOV_PRECISION_NAMESPACE {
 
 
 
@@ -115,5 +114,4 @@ void SpinHalfBasis::build_sz_basis()
 
 
 
-} // namespace QKRYLOV_PRECISION_NAMESPACE
 } // namespace qkrylov
