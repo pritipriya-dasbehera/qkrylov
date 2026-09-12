@@ -20,6 +20,7 @@ set(QKRYLOV_TESTS
     test_m1_core
     test_lanczos_lowest
     test_lanczos_policies
+    test_ftlm_sweep
 )
 
 foreach(test_name IN LISTS QKRYLOV_TESTS)
@@ -38,6 +39,7 @@ set(QKRYLOV_FP32_TESTS
     test_ftlm
     test_m1_core
     test_lanczos_policies
+    test_ftlm_sweep
 )
 
 foreach(test_name IN LISTS QKRYLOV_FP32_TESTS)
