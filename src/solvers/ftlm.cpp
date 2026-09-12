@@ -219,8 +219,12 @@ FTLMSweepResult ftlm_evaluate_sweep(
             Real mean_E = E_shifted / Z_shifted;
             res.internal_energies[bi] = mean_E;
             res.free_energies[bi] = (beta > Real(0.0)) ? (E_min - std::log(Z_shifted) / beta) : Real(0.0);
-            res.specific_heats[bi] = (beta * beta) * (E2_shifted / Z_shifted - mean_E * mean_E);
-            res.entropies[bi] = (beta > Real(0.0)) ? (beta * (mean_E - res.free_energies[bi])) : std::log(Z_shifted);
+            Real var_E = E2_shifted / Z_shifted - mean_E * mean_E;
+            if (var_E < Real(0.0)) var_E = Real(0.0);
+            res.specific_heats[bi] = (beta * beta) * var_E;
+            Real s_val = (beta > Real(0.0)) ? (beta * (mean_E - res.free_energies[bi])) : std::log(Z_shifted);
+            if (s_val < Real(0.0)) s_val = Real(0.0);
+            res.entropies[bi] = s_val;
 
             for (size_t oi = 0; oi < num_obs; ++oi) {
                 Real mean_obs = (A_shifted[oi] / Real(R)) / Z_shifted;

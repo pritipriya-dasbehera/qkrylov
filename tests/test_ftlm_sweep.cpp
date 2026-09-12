@@ -104,8 +104,8 @@ int main() {
         assert(!std::isnan(E));
         assert(!std::isnan(Cv));
         assert(!std::isnan(S));
-        assert(Cv >= -1e-10); // Heat capacity must be non-negative (within float tol)
-        assert(S >= -1e-10);  // Entropy must be non-negative
+        assert(Cv >= Real(0.0)); // Heat capacity must be non-negative
+        assert(S >= Real(0.0));  // Entropy must be non-negative
 
         // Observable <O_H> must match <H> to high precision
         assert(std::abs(exp_H - E) < 1e-4);
