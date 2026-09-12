@@ -186,6 +186,8 @@ QKRYLOV_PRECISION_NAMESPACE::LanczosResult lanczos(
     const int num_out = std::min<int>(target_n_eig, static_cast<int>(final_tridiag.eigenvalues.size()));
     result.eigenvalues.assign(final_tridiag.eigenvalues.begin(), final_tridiag.eigenvalues.begin() + num_out);
     result.energy = result.eigenvalues.empty() ? Real(0.0) : result.eigenvalues[0];
+    result.alphas = alphas;
+    result.betas = betas;
 
     // 6. Phase 2: Vector Reconstruction
     if constexpr (Traits::computes_vector) {

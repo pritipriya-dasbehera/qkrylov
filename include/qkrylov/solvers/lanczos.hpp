@@ -34,6 +34,8 @@ struct LanczosResult
     std::vector<HostVector> eigenvectors = {};   // All computed eigenvectors (size n_eig)
     int iterations = 0;                          // Iterations run
     bool converged = false;                      // True if requested state(s) converged
+    std::vector<Real> alphas = {};               // Tridiagonal diagonal elements (alpha_0 ... alpha_{m-1})
+    std::vector<Real> betas = {};                // Tridiagonal subdiagonal elements (beta_0 ... beta_{m-2})
 
     // Structured binding support: auto [e, v] = res;
     template <std::size_t I>
