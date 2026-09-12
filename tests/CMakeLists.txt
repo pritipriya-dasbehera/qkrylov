@@ -19,6 +19,7 @@ set(QKRYLOV_TESTS
     test_spin1_correction_vector
     test_m1_core
     test_lanczos_lowest
+    test_lanczos_policies
 )
 
 foreach(test_name IN LISTS QKRYLOV_TESTS)
@@ -36,6 +37,7 @@ set(QKRYLOV_FP32_TESTS
     test_dynamics
     test_ftlm
     test_m1_core
+    test_lanczos_policies
 )
 
 foreach(test_name IN LISTS QKRYLOV_FP32_TESTS)

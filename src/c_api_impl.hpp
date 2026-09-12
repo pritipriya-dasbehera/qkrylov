@@ -510,7 +510,12 @@ int SUFFIX(qkrylov_lanczos_ground_state_complex)(
     }
     try {
         auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
-        auto res = solvers::lanczos<solvers::policy::SinglePass>(*H, {maxiter, static_cast<Real>(tol)});
+        LanczosConfig cfg;
+        cfg.maxiter = maxiter;
+        cfg.tol = static_cast<Real>(tol);
+        auto res = eigenvector_complex
+            ? solvers::lanczos<solvers::policy::OnePass_DKGS>(*H, cfg)
+            : solvers::lanczos<solvers::policy::OnePass>(*H, cfg);
         result->energy     = static_cast<Scalar>(res.energy);
         result->iterations = res.iterations;
         result->converged  = res.converged ? 1 : 0;
@@ -564,7 +569,10 @@ int SUFFIX(qkrylov_lanczos_two_pass_ground_state_complex)(
     }
     try {
         auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
-        auto res = solvers::lanczos<solvers::policy::TwoPass>(*H, {maxiter, static_cast<Real>(tol)});
+        LanczosConfig cfg;
+        cfg.maxiter = maxiter;
+        cfg.tol = static_cast<Real>(tol);
+        auto res = solvers::lanczos<solvers::policy::TwoPass>(*H, cfg);
         result->energy     = static_cast<Scalar>(res.energy);
         result->iterations = res.iterations;
         result->converged  = res.converged ? 1 : 0;
@@ -625,7 +633,13 @@ int SUFFIX(qkrylov_lanczos_lowest_complex)(
                                     static_cast<Real>(initial_vector_complex[2 * i + 1]));
             }
         }
-        auto res = solvers::lanczos_lowest(*H, {n_eig, maxiter, static_cast<Real>(tol), compute_evecs, init_v});
+        LanczosConfig cfg;
+        cfg.n_eig = n_eig;
+        cfg.maxiter = maxiter;
+        cfg.tol = static_cast<Real>(tol);
+        cfg.compute_eigenvectors = compute_evecs;
+        cfg.initial_vector = std::move(init_v);
+        auto res = solvers::lanczos_lowest(*H, cfg);
         const size_t k = std::min(static_cast<size_t>(n_eig), res.eigenvalues.size());
         for (size_t i = 0; i < k; ++i) {
             eigenvalues_out[i] = static_cast<Scalar>(res.eigenvalues[i]);
