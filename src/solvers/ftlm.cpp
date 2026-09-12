@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <Kokkos_Core.hpp>
 
 namespace qkrylov {
@@ -33,6 +34,8 @@ Tridiag compute_tridiag(const MatrixFreeHamiltonian<ExecSpace>& H, const VectorV
     VectorView<ExecSpace> w("w", dim);
     Tridiag res;
 
+    const Real mach_eps = std::numeric_limits<Real>::epsilon() * Real(4.0);
+
     for (int i = 0; i < n_steps; ++i) {
         H.apply(v_curr, w);
         Real alpha = dot(v_curr, w).real();
@@ -42,7 +45,7 @@ Tridiag compute_tridiag(const MatrixFreeHamiltonian<ExecSpace>& H, const VectorV
         if (i > 0) axpy(-res.betas.back(), v_prev, w);
 
         Real beta = norm(w);
-        if (beta < 1e-15) break;
+        if (beta < mach_eps) break;
         res.betas.push_back(beta);
 
         Kokkos::deep_copy(v_prev, v_curr);
@@ -69,9 +72,11 @@ FullTridiagResult diagonalize_tridiag_components(const std::vector<Real>& alpha,
     std::vector<std::vector<Real>> z(n, std::vector<Real>(n, 0.0));
     for (int i = 0; i < n; ++i) z[i][i] = 1.0;
 
+    const Real eps = std::numeric_limits<Real>::epsilon() * Real(4.0);
+
     for (int iter = 0; iter < 1000; ++iter) {
         for (int i = 0; i < n - 1; ++i) {
-            if (std::abs(e[i]) < 1e-14 * (std::abs(d[i]) + std::abs(d[i+1]))) e[i] = 0.0;
+            if (std::abs(e[i]) <= eps * (std::abs(d[i]) + std::abs(d[i+1]))) e[i] = Real(0.0);
         }
         int m = n - 1;
         while (m > 0 && e[m-1] == 0.0) m--;
@@ -133,9 +138,13 @@ FTLMResult ftlm(
     std::mt19937 rng(42);
     std::normal_distribution<Real> dist(0.0, 1.0);
 
-    Real Z = 0.0;
-    Real E = 0.0;
-    Real E2 = 0.0;
+    struct SampleData {
+        Real nrm = 0.0;
+        FullTridiagResult eig;
+    };
+    std::vector<SampleData> samples(n_random);
+
+    Real E_min = std::numeric_limits<Real>::infinity();
 
     for (int r = 0; r < n_random; ++r) {
         VectorView<ExecSpace> r_vec("r_vec", dim);
@@ -148,23 +157,48 @@ FTLMResult ftlm(
         auto tridiag = compute_tridiag(H, r_vec, n_steps);
         auto eig = diagonalize_tridiag_components(tridiag.alphas, tridiag.betas);
 
+        for (Real eval : eig.eigenvalues) {
+            if (eval < E_min) E_min = eval;
+        }
+
+        samples[r].nrm = nrm;
+        samples[r].eig = std::move(eig);
+    }
+
+    if (std::isinf(E_min)) return {beta};
+
+    Real Z_shifted = 0.0;
+    Real E_shifted = 0.0;
+    Real E2_shifted = 0.0;
+
+    for (int r = 0; r < n_random; ++r) {
+        Real nrm = samples[r].nrm;
+        const auto& eig = samples[r].eig;
+
         for (size_t i = 0; i < eig.eigenvalues.size(); ++i) {
-            Real weight = nrm * nrm * eig.first_components[i] * eig.first_components[i] * std::exp(-beta * eig.eigenvalues[i]);
-            Z += weight;
-            E += eig.eigenvalues[i] * weight;
-            E2 += eig.eigenvalues[i] * eig.eigenvalues[i] * weight;
+            Real exponent = -beta * (eig.eigenvalues[i] - E_min);
+            Real exp_val = (exponent < -Real(80.0)) ? Real(0.0) : std::exp(exponent);
+            Real weight = nrm * nrm * eig.first_components[i] * eig.first_components[i] * exp_val;
+            Z_shifted += weight;
+            E_shifted += eig.eigenvalues[i] * weight;
+            E2_shifted += eig.eigenvalues[i] * eig.eigenvalues[i] * weight;
         }
     }
 
-    Z /= n_random;
-    E /= n_random;
-    E2 /= n_random;
+    Z_shifted /= n_random;
+    E_shifted /= n_random;
+    E2_shifted /= n_random;
 
     FTLMResult res;
     res.beta = beta;
-    res.partition_function = Z;
-    res.internal_energy = E / Z;
-    res.specific_heat = (beta * beta) * (E2 / Z - (E / Z) * (E / Z));
+
+    if (Z_shifted > Real(0.0)) {
+        Real log_Z = std::log(Z_shifted) - beta * E_min;
+        const Real max_exp = (sizeof(Real) > 4) ? Real(700.0) : Real(85.0);
+        res.partition_function = (log_Z < max_exp) ? std::exp(log_Z) : std::numeric_limits<Real>::infinity();
+        res.internal_energy = E_shifted / Z_shifted;
+        res.specific_heat = (beta * beta) * (E2_shifted / Z_shifted - (E_shifted / Z_shifted) * (E_shifted / Z_shifted));
+    }
 
     return res;
 }
