@@ -3,51 +3,51 @@
 [[libqkrylov]]
 arch = "aarch64"
 lazy = true
-git-tree-sha1 = "e9bc6fbbb6fdc5279a572b5f4a875ec0f598707c"
+git-tree-sha1 = "fc426be55ab0fdb32057f8e82959a85a4ea3305e"
 os = "macos"
 
     [[libqkrylov.download]]
-    sha256 = "d5d214fd517d4e07fe04684d24619bf56fb283d7a1e106e4a092ce876d5c4cb3"
+    sha256 = "b53f5ef939e867032c5657b6b16e434cdf5bc42fd8c8927a6e629bcb230b374b"
     url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-temp/qkrylov-aarch64-apple-darwin.tar.gz"
 
 [[libqkrylov]]
 arch = "aarch64"
 lazy = true
-git-tree-sha1 = "16c59bedeef1f8e194ad0ceee8ba1174361413e2"
+git-tree-sha1 = "1ed0dc46260b62c9a4034f92153c97c597f4bd01"
 os = "linux"
 
     [[libqkrylov.download]]
-    sha256 = "d59644ab584e5a8049d4d39a7819d3a1bba1f7c7661231b0a46f870c06e7f698"
+    sha256 = "3c8613d2172a6ad1fed9c1b9abb0753b91de3a3aa446cf85c296fe3662b5697d"
     url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-temp/qkrylov-aarch64-linux-gnu.tar.gz"
 
 [[libqkrylov]]
 arch = "x86_64"
 lazy = true
 cuda = "12.0"
-git-tree-sha1 = "7fcfe232cb539912628040601e512e564d4df67c"
+git-tree-sha1 = "c9fba9fc8603a093838153b648b93f0be5c4fd3d"
 os = "linux"
 
     [[libqkrylov.download]]
-    sha256 = "a2a6244af1e572282aa799a620b29bfe62dcdd95b7129a651be9385f64b9510c"
+    sha256 = "cc50ac5716bd99c901cc87da05dd92b1b997f76f7788ce3d59b3b985bc6542c4"
     url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-temp/qkrylov-x86_64-linux-gnu-cuda12.tar.gz"
 
 [[libqkrylov]]
 arch = "x86_64"
 lazy = true
 cuda = "none"
-git-tree-sha1 = "98faf8c0a49526f18d37fc35cb669444c52425d0"
+git-tree-sha1 = "633d52041336ac1f3b69abb5c25483124a222929"
 os = "linux"
 
     [[libqkrylov.download]]
-    sha256 = "16df19c5e3c0ebccdff4e59ed0d8d9ad52e3665dacc7e6edc0b371baa70caacf"
+    sha256 = "ddc38d4e33dd946a98b3d7e5a029620e9f88a0c06bb405f9fcbff3415beb498e"
     url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-temp/qkrylov-x86_64-linux-gnu.tar.gz"
 
 [[libqkrylov]]
 arch = "x86_64"
 lazy = true
-git-tree-sha1 = "452c643c571d6b0497d43902fb2843cbf8a5e760"
+git-tree-sha1 = "21e47f66da8fe31f6e25d410ef187aa68f82e7fb"
 os = "windows"
 
     [[libqkrylov.download]]
-    sha256 = "9dbbb30e6a2aadcb9df159b390546fe124f3b09e34b2af40cb0f6b8a60192e21"
+    sha256 = "8578f6c4303d5adf2e32e3aebc1c47d6753fa3ee6077a5764cb1ba707725888c"
     url = "https://github.com/pritipriya-dasbehera/qkrylov/releases/download/julia-temp/qkrylov-x86_64-w64-mingw32.tar.gz"
