@@ -1,19 +1,25 @@
-# Julia API Documentation (`QKrylov.jl`)
+# Julia API Documentation (`QuantumKrylov.jl`)
 
-`QKrylov.jl` provides native Julia bindings for `qkrylov` via zero-copy C ABI calls (`ccall`).
+`QuantumKrylov.jl` provides idiomatic, high-performance Julia bindings for `qkrylov` via zero-copy C ABI calls (`ccall`) and full integration with the **SciML CommonSolve** dispatch interface (`solve(prob, alg)`).
 
 ---
 
-## 1. Module Overview & Package Setup
+## 1. Package Installation & Module Setup
 
-To use `QKrylov.jl` in your Julia environment:
+In the Julia REPL (press `]` to enter Pkg mode):
 
 ```julia
-using QKrylov
+pkg> add https://github.com/sjp95/qkrylov.git#julia-latest:bindings/julia
+```
+
+Or in Julia code:
+
+```julia
+using QuantumKrylov
 ```
 
 ### Shared Library Loading
-`QKrylov.jl` automatically locates `libqkrylov.so` in your build tree. If custom library placement is used, set the environment variable:
+`QuantumKrylov.jl` automatically locates prebuilt `qkrylov_jll` binary artifacts or local build artifacts (`libqkrylov.so`, `libqkrylov.dylib`, `qkrylov.dll`). To specify a custom shared library path:
 ```bash
 export QKRYLOV_LIB_PATH=/path/to/libqkrylov.so
 ```
@@ -22,186 +28,234 @@ export QKRYLOV_LIB_PATH=/path/to/libqkrylov.so
 
 ## 2. Symmetry Sectors (`Sector`)
 
-Symmetry sectors restrict the Hilbert space dimension to specific quantum number sectors.
+Symmetry sectors restrict the many-body Hilbert space to target quantum numbers.
 
 ```julia
 sec = Sector()
+set_sz!(sec, 0) # Enforces Sz = 0 (pass 2 * Sz)
 ```
 
-### Function Usage
-
-#### `Sector()`
-- **Description**: Allocates a new quantum symmetry sector object.
-- **Returns**: `Sector` object with automatic GC finalizer.
-
-#### `set_sz!(sec::Sector, sz2::Integer)`
-- **Description**: Restricts to a total spin projection $S_z$. Note that `sz2` represents $2 \times S_z$.
-- **Arguments**:
-  - `sec::Sector`: Sector object to modify.
-  - `sz2::Integer`: Twice the $S_z$ quantum number (e.g. `0` for $S_z=0$, `1` for $S_z=1/2$, `-2` for $S_z=-1$).
-- **Returns**: `sec::Sector`
-
-#### `set_hubbard_particles!(sec::Sector, nup::Integer, ndn::Integer)`
-- **Description**: Restricts particle counts for Fermi-Hubbard and $t$-$J$ models.
-- **Arguments**:
-  - `sec::Sector`: Sector object to modify.
-  - `nup::Integer`: Number of spin-up particles ($N_{\uparrow}$).
-  - `ndn::Integer`: Number of spin-down particles ($N_{\downarrow}$).
-- **Returns**: `sec::Sector`
+### Methods
+- `Sector()`: Allocates a symmetry sector handle with automatic GC finalizer.
+- `set_sz!(sec::Sector, sz2::Integer)`: Restricts total $S_z$ projection ($2 \times S_z$). For $S_z=0$, pass `0`; for $S_z=1/2$, pass `1`.
+- `set_hubbard_particles!(sec::Sector, nup::Integer, ndn::Integer)`: Restricts spin-up ($N_\uparrow$) and spin-down ($N_\downarrow$) electron counts.
+- `set_n!(sec::Sector, n::Integer)`: Restricts total particle number for spinless fermions.
+- `set_nb!(sec::Sector, nb::Integer)`: Restricts total boson particle number.
 
 ---
 
 ## 3. Site Definitions (`AbstractSite`)
 
-Site types describe local site degrees of freedom and state spaces.
+Site models describe local degrees of freedom and local operator algebras:
 
 ```julia
-s1 = SpinHalfSite()
-s2 = FermionSite()
-s3 = HubbardSite()
-s4 = TJSite()
+s1 = SpinHalfSite()      # Spin-1/2 (dim 2: |up>, |down>)
+s2 = SpinSSite(1.0)       # Spin-S (e.g. S=1, dim 3: |+1>, |0>, |-1>)
+s3 = FermionSite()       # Spinless fermion (dim 2: |0>, |1>)
+s4 = HubbardSite()       # Spinful Fermi-Hubbard (dim 4: |0>, |up>, |down>, |up down>)
+s5 = TJSite()            # t-J model (dim 3: |0>, |up>, |down>, no double occupancy)
 ```
-
-### Types & Constructors
-
-| Type | Parent Type | Description | Local Dimension |
-|------|-------------|-------------|----------------|
-| `SpinHalfSite()` | `AbstractSite` | Spin-1/2 local site ($|\uparrow\rangle, |\downarrow\rangle$) | 2 |
-| `FermionSite()` | `AbstractSite` | Spinless fermion site ($|0\rangle, |1\rangle$) | 2 |
-| `HubbardSite()` | `AbstractSite` | Spinful Fermi-Hubbard site ($|0\rangle, |\uparrow\rangle, |\downarrow\rangle, |\uparrow\downarrow\rangle$) | 4 |
-| `TJSite()` | `AbstractSite` | $t$-$J$ model site without double occupancy ($|0\rangle, |\uparrow\rangle, |\downarrow\rangle$) | 3 |
 
 ---
 
 ## 4. Hilbert Space Bases (`AbstractBasis`)
 
-Basis classes construct quantum state representations across $N$ lattice sites.
-
-### Constructors
+Constructs many-body basis representations across $N$ lattice sites:
 
 ```julia
-b1 = SpinHalfBasis(num_sites::Integer, sector::Union{Sector, Nothing}=nothing)
-b2 = FermionBasis(num_sites::Integer, sector::Union{Sector, Nothing}=nothing)
-b3 = HubbardBasis(num_sites::Integer, sector::Union{Sector, Nothing}=nothing)
-b4 = TJBasis(num_sites::Integer, sector::Union{Sector, Nothing}=nothing)
+b1 = SpinHalfBasis(N; sz=0)                 # Spin-1/2 basis (Sz = 0)
+b2 = SpinSBasis(N, 1.0; sector=sec)         # Spin-1 basis
+b3 = FermionBasis(N; n=2)                   # Spinless fermion basis with 2 particles
+b4 = HubbardBasis(N; nup=1, ndn=1)          # Fermi-Hubbard basis (1 up, 1 down)
+b5 = TJBasis(N; nup=1, ndn=1)               # t-J basis
 ```
 
-### Methods
-
-#### `dimension(b::AbstractBasis)::UInt64`
-- **Description**: Returns the total dimension of the Hilbert space.
-- **Example**:
-  ```julia
-  dim = dimension(b1)
-  ```
-
-#### `nsites(b::AbstractBasis)::Int`
-- **Description**: Returns the number of physical lattice sites.
-- **Example**:
-  ```julia
-  sites = nsites(b1)
-  ```
-
-#### `Base.size(b::AbstractBasis)`
-- **Description**: Overloads Julia `size()` to return matrix dimensions `(dim, dim)`.
+### Inspection Methods
+- `dimension(b::AbstractBasis)::UInt64`: Total Hilbert space dimension.
+- `nsites(b::AbstractBasis)::Int`: Number of physical sites.
+- `state(b::AbstractBasis, index::Integer)::UInt64`: Integer bitstring representation at 0-based index.
+- `basis_index(b::AbstractBasis, bitstring::Unsigned)::Int64`: 0-based basis index for a given bitstring (or `-1`).
+- `bitstring in basis`: Returns `true` if `bitstring` belongs to the basis.
+- `b[i]`: 1-based indexing returning state bitstring at index `i`.
 
 ---
 
-## 5. Operator Terms (`OpSum`)
+## 5. Operator Expressions (`OpSum`)
 
-`OpSum` constructs Hamiltonian operator expressions from 1-body and 2-body local site operators.
+`OpSum` constructs Hamiltonian and observable expressions using natural operator algebra:
 
 ```julia
 op = OpSum()
+
+# Spin-1/2 Heisenberg chain
+for i in 0:(N-2)
+    global op += 1.0 * Sz(i) * Sz(i+1) + 0.5 * (Sp(i) * Sm(i+1) + Sm(i) * Sp(i+1))
+end
+
+# Hubbard interaction: t-V hopping + onsite U
+for i in 0:(N-2)
+    global op += -1.0 * (CdagUp(i) * CUp(i+1) + CdagDn(i) * CDn(i+1))
+end
+for i in 0:(N-1)
+    global op += 4.0 * Nupdn(i)
+end
 ```
 
-### Function Usage
-
-#### `OpSum()`
-- **Description**: Creates a new operator sum container.
-
-#### `add_term!(op::OpSum, coeff::Number, op1::AbstractString, site1::Integer)`
-- **Description**: Adds a 1-body operator term $\text{coeff} \cdot \hat{O}_{1, \text{site1}}$.
-- **Arguments**:
-  - `op::OpSum`: Target operator sum object.
-  - `coeff::Number`: Coupling constant (real or complex).
-  - `op1::AbstractString`: Name of local site operator (e.g. `"Sz"`, `"Sp"`, `"Sm"`, `"n"`).
-  - `site1::Integer`: 0-indexed site location.
-
-#### `add_term!(op::OpSum, coeff::Number, op1::AbstractString, site1::Integer, op2::AbstractString, site2::Integer)`
-- **Description**: Adds a 2-body interaction term $\text{coeff} \cdot \hat{O}_{1, \text{site1}} \hat{O}_{2, \text{site2}}$.
-- **Arguments**:
-  - `op::OpSum`: Target operator sum object.
-  - `coeff::Number`: Coupling constant.
-  - `op1::AbstractString`, `op2::AbstractString`: Names of local site operators.
-  - `site1::Integer`, `site2::Integer`: 0-indexed site locations.
-
-#### `clear!(op::OpSum)`
-- **Description**: Clears all terms stored inside `op`.
+### Supported Operator Symbols
+- **Spin-1/2**: `Sz(i)`, `Sp(i)`, `Sm(i)`, `Sx(i)`, `Sy(i)`
+- **Fermions**: `c(i)`, `cdag(i)`, `n(i)`
+- **Hubbard**: `CdagUp(i)`, `CUp(i)`, `CdagDn(i)`, `CDn(i)`, `Nup(i)`, `Ndn(i)`, `Nupdn(i)`
+- **Bosons**: `Bdag(i)`, `B(i)`, `N(i)`
 
 ---
 
 ## 6. Matrix-Free Hamiltonian (`MatrixFreeHamiltonian`)
 
-The `MatrixFreeHamiltonian` evaluates matrix-vector products $y = H \cdot x$ on-the-fly without constructing explicit matrix representations in memory.
-
-### Constructor & Methods
-
-#### `MatrixFreeHamiltonian(basis::AbstractBasis, site::AbstractSite, opsum::OpSum)`
-- **Description**: Constructs a matrix-free Hamiltonian wrapper. Automatically retains references to `basis`, `site`, and `opsum` to prevent GC release of dependencies while active.
-
-#### `dimension(H::MatrixFreeHamiltonian)::UInt64`
-- **Description**: Returns matrix dimension $\mathcal{D}$.
-
-#### `Base.:*(H::MatrixFreeHamiltonian, x::AbstractVector{<:Number})::Vector{ComplexF64}`
-- **Description**: Computes the matrix-vector multiplication $y = H \cdot x$ in zero-copy mode.
-- **Example**:
-  ```julia
-  x = rand(ComplexF64, dimension(H))
-  y = H * x
-  ```
-
----
-
-## 7. Solvers (`lanczos_ground_state`)
-
-### Function Usage
-
-#### `lanczos_ground_state(H::MatrixFreeHamiltonian; maxiter::Integer=100, tol::Real=1e-12)::LanczosResult`
-- **Description**: Computes the ground state energy using Krylov-subspace Lanczos iteration.
-- **Keyword Arguments**:
-  - `maxiter::Integer`: Maximum number of Lanczos iterations (default: `100`).
-  - `tol::Real`: Residual tolerance (default: `1e-12`).
-- **Returns**: `LanczosResult(energy::Float64)`.
-
----
-
-## 8. Full End-to-End Code Example
+Evaluates $y = H x$ on-the-fly without materializing the matrix in memory:
 
 ```julia
-using QKrylov
+# Constructs MatrixFreeHamiltonian (site model inferred from basis)
+# Targets GPU if available, otherwise CPU:
+device = is_gpu_build() ? "cuda:0" : "cpu"
+H = MatrixFreeHamiltonian(basis, op; device=device)
 
-# Create a 6-site Spin-1/2 Heisenberg chain with Sz=0 sector
+# Zero-copy matrix-vector multiplication
+x = rand(ComplexF64, dimension(H))
+y = H * x
+
+# Extract matrix diagonal
+diag_H = diagonal(H)
+```
+
+---
+
+## 7. SciML CommonSolve Interface (`solve(prob, alg)`)
+
+`QuantumKrylov.jl` implements standard SciML problem/algorithm dispatches:
+
+### A. Ground State (`GroundStateProblem`)
+```julia
+prob = GroundStateProblem(H)
+
+# One-pass Lanczos
+sol = solve(prob, Lanczos(maxiter=100, tol=1e-12, compute_eigenvector=true))
+println("Ground state energy: ", sol.energy)
+println("Wavefunction:        ", sol.state)
+
+# Two-pass Lanczos (memory frugal: saves only 3 working vectors during Lanczos pass)
+sol_tp = solve(prob, Lanczos(maxiter=100, tol=1e-12, compute_eigenvector=true, two_pass=true))
+```
+
+### B. Low-Lying Excited States (`ExcitedStatesProblem`)
+```julia
+prob = ExcitedStatesProblem(H, 3)
+
+# Davidson subspace solver
+sol_dav = solve(prob, Davidson(n_eig=3, max_subspace=20, tol=1e-8, compute_eigenvectors=true))
+println("Lowest 3 energies: ", sol_dav.eigenvalues)
+println("Eigenvectors:      ", sol_dav.eigenvectors)
+
+# Lanczos lowest-k solver
+sol_lanc = solve(prob, Lanczos(n_eig=3, maxiter=200, tol=1e-8))
+```
+
+### C. Thermodynamics & Multi-Temperature Sweeps (`ThermalProblem`)
+```julia
+# Single temperature
+prob_single = ThermalProblem(H, 1.0)
+sol_single = solve(prob_single, FTLM(n_random=10, n_steps=50))
+println("Z(beta=1.0) = ", sol_single.partition_function)
+println("E(beta=1.0) = ", sol_single.internal_energy)
+
+# Multi-temperature grid with arbitrary observables
+betas = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+prob_sweep = ThermalProblem(H, betas; observables=[H, Sz0_H])
+sol_sweep = solve(prob_sweep, FTLM(n_random=20, n_steps=60, seed=42))
+
+println("Free energies:     ", sol_sweep.free_energies)
+println("Specific heats:    ", sol_sweep.specific_heats)
+println("Entropies:         ", sol_sweep.entropies)
+println("Observable <O>:    ", sol_sweep.observable_expectations)
+println("Observable error:  ", sol_sweep.observable_errors)
+```
+
+### D. Dynamical Response (`DynamicalProblem` & `CorrectionVectorProblem`)
+```julia
+# Continued Fraction
+prob_dyn = DynamicalProblem(H, phi0; e0=E0)
+sol_dyn = solve(prob_dyn, ContinuedFraction(n_iter=100))
+A_w = evaluate_spectral_function(sol_dyn, 1.0, E0, 0.05)
+
+# Correction Vector (Shifted Linear Solve)
+prob_cv = CorrectionVectorProblem(H, phi0; e0=E0, omega=1.0, eta=0.05)
+sol_cv = solve(prob_cv, CorrectionVector(maxiter=500, tol=1e-8, return_vector=true))
+println("Spectral weight: ", sol_cv.spectral_function)
+println("Correction vec:  ", sol_cv.vector)
+```
+
+---
+
+## 8. Functional Solvers Reference
+
+| Function | Description | Key Arguments | Return Type |
+| :--- | :--- | :--- | :--- |
+| `lanczos_ground_state(H; ...)` | Ground state energy & wavefunction | `maxiter=100`, `tol=1e-12`, `return_state=false`, `two_pass=false` | `LanczosResult` |
+| `davidson_lowest(H; ...)` | Subspace Davidson eigensolver | `n_eig=1`, `max_subspace=20`, `tol=1e-8`, `compute_eigenvectors=true` | `DavidsonResult` |
+| `lanczos_lowest(H; ...)` | Thick-restart / full Lanczos lowest $k$ | `n_eig=1`, `maxiter=100`, `tol=1e-8`, `compute_eigenvectors=true` | `LanczosLowestResult` |
+| `ftlm_sweep(H, beta_grid; ...)` | Multi-temperature FTLM sweep with observables | `observables=[]`, `n_random=10`, `n_steps=50`, `seed=0` | `FTLMSweepResult` |
+| `ftlm(H; beta, ...)` | Single-temperature FTLM | `beta=1.0`, `n_random=10`, `n_steps=50` | `FTLMResult` |
+| `continued_fraction_coeffs(H, phi0; ...)` | Continued fraction Lanczos $\alpha, \beta$ coefficients | `n_iter=100` | `ContinuedFractionResult` |
+| `evaluate_spectral_function(cfr, w, E0, eta)` | Continued fraction Green's function evaluation | `w`, `E0`, `eta` | `Float64` |
+| `solver_correction_vector(H, phi0; ...)` | Correction vector linear system solve | `e0`, `omega`, `eta=0.1`, `maxiter=500`, `tol=1e-8`, `return_vector=false` | `CorrectionVectorResult` |
+
+---
+
+## 9. Hardware & Accelerator Queries
+
+```julia
+using QuantumKrylov
+
+# Check if compiled with GPU acceleration (CUDA, HIP, SYCL)
+is_gpu = is_gpu_build() # Bool
+
+# Active GPU backend name ("cuda", "hip", "sycl", or nothing)
+gpu = find_gpu()
+
+# Available physical GPU count
+count = gpu_count()
+
+# Explicitly initialize device runtime target
+initialize_device!("cuda:0")
+```
+
+---
+
+## 10. Complete End-to-End Example
+
+```julia
+using QuantumKrylov
+
+# 1. Setup 6-site Spin-1/2 Heisenberg chain with Sz=0
 N = 6
-sec = Sector()
-set_sz!(sec, 0)
-
-basis = SpinHalfBasis(N, sec)
-site  = SpinHalfSite()
-op    = OpSum()
-
-# Add Heisenberg terms H = \sum_i (S^z_i S^z_{i+1} + 0.5(S^+_i S^-_{i+1} + S^-_i S^+_{i+1}))
-for i in 0:(N-1)
-    next_i = mod(i + 1, N)
-    add_term!(op, 1.0, "Sz", i, "Sz", next_i)
-    add_term!(op, 0.5, "Sp", i, "Sm", next_i)
-    add_term!(op, 0.5, "Sm", i, "Sp", next_i)
+basis = SpinHalfBasis(N; sz=0)
+op = OpSum()
+for i in 0:(N-2)
+    global op += 1.0 * Sz(i) * Sz(i+1) + 0.5 * (Sp(i) * Sm(i+1) + Sm(i) * Sp(i+1))
 end
 
-H = MatrixFreeHamiltonian(basis, site, op)
-println("Hamiltonian Dimension: ", dimension(H))
+target = is_gpu_build() ? "cuda:0" : "cpu"
+H = MatrixFreeHamiltonian(basis, op; device=target)
 
-# Solve for ground state energy
-res = lanczos_ground_state(H, maxiter=100, tol=1e-12)
-println("Calculated Ground State Energy: ", res.energy)
+# 2. Ground state via SciML Lanczos
+sol_gs = solve(GroundStateProblem(H), Lanczos(compute_eigenvector=true))
+println("Ground state energy: ", sol_gs.energy)
+
+# 3. Excited states via Davidson
+sol_dav = solve(ExcitedStatesProblem(H, 3), Davidson(n_eig=3))
+println("Lowest 3 energies:   ", sol_dav.eigenvalues)
+
+# 4. Multi-temperature thermodynamic sweep
+betas = [0.1, 0.5, 1.0, 2.0, 5.0]
+sol_th = solve(ThermalProblem(H, betas; observables=[H]), FTLM(n_random=20, n_steps=50))
+println("Specific heat Cv:    ", sol_th.specific_heats)
 ```

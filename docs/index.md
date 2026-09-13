@@ -77,20 +77,19 @@ Here is a simple example computing the ground state energy of a 2-site anti-ferr
 
     int main() {
         // 2 sites, Sz=0 sector
-        qk::Sector sector;
-        sector.use_sz = true;
-        sector.sz = 0;
-        qk::SpinHalfBasis basis(2, sector);
-        qk::SpinHalfSite site;
+        auto sector = std::make_shared<qkrylov::Sector>();
+        sector->set_sz(0);
+        auto basis = std::make_shared<qkrylov::SpinHalfBasis>(2, sector);
+        auto site = std::make_shared<qkrylov::SpinHalfSite>();
         
-        qk::OpSum ops;
-        ops.add(0.25, "Sz", 0, "Sz", 1);
-        ops.add(0.5, "Sp", 0, "Sm", 1);
-        ops.add(0.5, "Sm", 0, "Sp", 1);
+        qkrylov::OpSum ops;
+        ops += {0.25, {{"Sz", 0}, {"Sz", 1}}};
+        ops += {0.5, {{"Sp", 0}, {"Sm", 1}}};
+        ops += {0.5, {{"Sm", 0}, {"Sp", 1}}};
 
-        qk::MatrixFreeHamiltonian H(basis, site, ops);
+        qkrylov::MatrixFreeHamiltonian H(basis, site, ops);
         
-        auto [energy, state] = qk::lanczos_ground_state(H);
+        auto [energy, state] = qkrylov::lanczos_ground_state(H);
         std::cout << "Ground state energy: " << energy << std::endl;
         
         return 0;
@@ -99,7 +98,7 @@ Here is a simple example computing the ground state energy of a 2-site anti-ferr
 
 === "Julia"
     ```julia
-    using QKrylov
+    using QuantumKrylov
 
     sec = Sector()
     set_sz!(sec, 0)
@@ -108,7 +107,7 @@ Here is a simple example computing the ground state energy of a 2-site anti-ferr
     site  = SpinHalfSite()
 
     op = OpSum()
-    add_term!(op, 1.0, "Sz", 0, "Sz", 1)
+    add_term!(op, 0.25, "Sz", 0, "Sz", 1)
     add_term!(op, 0.5, "Sp", 0, "Sm", 1)
     add_term!(op, 0.5, "Sm", 0, "Sp", 1)
 
@@ -133,7 +132,7 @@ If you use `qkrylov` in your research, please consider citing it:
 
 ```bibtex
 @software{qkrylov,
-  author = {Pal, Subhajyoti and Mukhopadhyay, Aritra},
+  author = {Pal, Subhajyoti and Mukhopadhyay, Aritra and Dasbehera, Pritipriya},
   title = {qkrylov: Matrix-free Krylov methods for quantum many-body physics},
   url = {https://github.com/sjp95/qkrylov}
 }

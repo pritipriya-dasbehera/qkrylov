@@ -260,3 +260,11 @@ class TJBasis(Basis):
         if self._conserve_ndn: sec_strs.append(f"ndn={self._ndn}")
         sec_str = ", " + ", ".join(sec_strs) if sec_strs else ""
         return f"TJBasis(N={self.nsites}, dim={self.size}{sec_str})"
+
+
+# Aliases conforming to API blueprint
+SpinHalf = SpinHalfBasis
+SpinS = SpinSBasis
+Fermion = FermionBasis
+Hubbard = HubbardBasis
+TJ = TJBasis

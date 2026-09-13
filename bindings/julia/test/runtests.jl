@@ -203,6 +203,135 @@ using QuantumKrylov
         @test_throws ErrorException lanczos_ground_state(H, initial_vector=zeros(ComplexF64, 16))
     end
 
+    @testset "SciML Problem-Algorithm solve() Interface" begin
+        # 4-site 1D Heisenberg chain (L=4 <= 15)
+        N = 4
+        basis = SpinHalfBasis(N)
+        site = SpinHalfSite()
+        op = OpSum()
+        for i in 0:(N-1)
+            next_i = mod(i + 1, N)
+            add_term!(op, 1.0, "Sz", i, "Sz", next_i)
+            add_term!(op, 0.5, "Sp", i, "Sm", next_i)
+            add_term!(op, 0.5, "Sm", i, "Sp", next_i)
+        end
+        H = MatrixFreeHamiltonian(basis, site, op)
+
+        prob = GroundStateProblem(H)
+        @test prob isa AbstractQuantumProblem
+        @test prob.H === H
+
+        # 1. OnePass Lanczos (Default)
+        alg_op = Lanczos(variation=OnePass(), maxiter=50, tol=1e-12)
+        @test alg_op isa AbstractQuantumAlgorithm
+        @test alg_op.variation isa OnePass
+        sol_op = solve(prob, alg_op)
+        @test sol_op isa AbstractQuantumSolution
+        @test sol_op isa GroundStateSolution
+        @test isapprox(sol_op.value, -2.0, atol=1e-6)
+        @test isapprox(sol_op.energy, -2.0, atol=1e-6)
+        @test sol_op.converged == true
+        @test sol_op.iterations > 0
+        @test length(sol_op.u) == 16
+        @test length(sol_op.state) == 16
+        @test length(sol_op.eigenvector) == 16
+        @test sol_op.u === sol_op.eigenvector
+        @test isapprox(H * sol_op.u, sol_op.value .* sol_op.u, atol=1e-5)
+
+        # Destructuring test
+        E0, psi = sol_op
+        @test isapprox(E0, -2.0, atol=1e-6)
+        @test length(psi) == 16
+        @test psi === sol_op.u
+
+        # Default algorithm dispatch
+        sol_default = solve(prob)
+        @test isapprox(sol_default.value, -2.0, atol=1e-6)
+        @test isapprox(sol_default.u, sol_op.u, atol=1e-5)
+
+        # 2. TwoPass Lanczos Variation
+        alg_tp = Lanczos(variation=TwoPass(), maxiter=50, tol=1e-12, return_state=true)
+        @test alg_tp.variation isa TwoPass
+        sol_tp = solve(prob, alg_tp)
+        @test isapprox(sol_tp.value, -2.0, atol=1e-6)
+        @test isapprox(sol_tp.value, sol_op.value, atol=1e-10)
+        @test sol_tp.converged == true
+        @test length(sol_tp.u) == 16
+        @test isapprox(H * sol_tp.u, sol_tp.value .* sol_tp.u, atol=1e-5)
+
+        # Destructuring TwoPass
+        E0_tp, psi_tp = sol_tp
+        @test isapprox(E0_tp, -2.0, atol=1e-6)
+        @test length(psi_tp) == 16
+
+        # 3. Energy-only calculations (return_state=false)
+        sol_op_no_state = solve(prob, Lanczos(variation=OnePass(), maxiter=50, tol=1e-12, return_state=false))
+        @test isapprox(sol_op_no_state.value, -2.0, atol=1e-6)
+        @test_throws ErrorException sol_op_no_state.u
+        @test_throws ErrorException sol_op_no_state.state
+
+        sol_tp_no_state = solve(prob, Lanczos(variation=TwoPass(), maxiter=50, tol=1e-12, return_state=false))
+        @test isapprox(sol_tp_no_state.value, -2.0, atol=1e-6)
+        @test_throws ErrorException sol_tp_no_state.u
+
+        # 4. Runtime Argument & Policy Validation
+        @test_throws ErrorException solve(prob, Lanczos(maxiter=0))
+        @test_throws ErrorException solve(prob, Lanczos(maxiter=-10))
+        @test_throws ErrorException lanczos_ground_state(H; maxiter=0)
+        @test_throws ErrorException lanczos_lowest(H; n_eig=0)
+        @test_throws ErrorException lanczos_lowest(H; maxiter=0)
+
+        # Policy restriction: TwoPass with n_eig > 1 must throw ArgumentError
+        @test_throws ArgumentError solve(ExcitedStatesProblem(H, 2), Lanczos(variation=TwoPass()))
+        # TwoPass with n_eig == 1 succeeds
+        sol_ex_tp1 = solve(ExcitedStatesProblem(H, 1), Lanczos(variation=TwoPass()))
+        @test length(sol_ex_tp1.eigenvalues) == 1
+        @test isapprox(sol_ex_tp1.eigenvalues[1], -2.0, atol=1e-6)
+
+        # 5. ExcitedStatesProblem with Davidson and Lanczos (OnePass)
+        ex_prob = ExcitedStatesProblem(H, 2)
+        @test ex_prob isa AbstractQuantumProblem
+        sol_dav = solve(ex_prob, Davidson(n_eig=2, max_subspace=10, tol=1e-6))
+        @test length(sol_dav.eigenvalues) == 2
+        @test isapprox(sol_dav.eigenvalues[1], -2.0, atol=1e-5)
+
+        sol_lanczos_ex = solve(ex_prob, Lanczos(maxiter=50, tol=1e-8))
+        @test length(sol_lanczos_ex.eigenvalues) == 2
+        @test isapprox(sol_lanczos_ex.eigenvalues[1], -2.0, atol=1e-5)
+        @test isapprox(sol_lanczos_ex.eigenvalues[2], -1.0, atol=1e-5)
+        @test length(sol_lanczos_ex.eigenvectors) == 2
+        @test isapprox(sol_lanczos_ex.energy, -2.0, atol=1e-5)
+
+        # Direct lanczos_lowest with warm-starting
+        lowest_direct = lanczos_lowest(H; n_eig=2, maxiter=50, tol=1e-8, initial_vector=psi)
+        @test length(lowest_direct.eigenvalues) == 2
+        @test isapprox(lowest_direct.eigenvalues[1], -2.0, atol=1e-5)
+
+        # 5. ThermalProblem with FTLM
+        th_prob = ThermalProblem(H, 1.0)
+        @test th_prob isa AbstractQuantumProblem
+        sol_ftlm = solve(th_prob, FTLM(beta=1.0, n_random=5, n_steps=20))
+        @test sol_ftlm.partition_function > 0.0
+
+        th_sweep_prob = ThermalProblem(H, [0.5, 1.0]; observables=[H])
+        sol_sweep = solve(th_sweep_prob, FTLM(n_random=5, n_steps=20))
+        @test sol_sweep isa FTLMSweepResult
+        @test length(sol_sweep.beta_grid) == 2
+        @test isapprox(sol_sweep.observable_expectations[1][1], sol_sweep.internal_energies[1], rtol=1e-4)
+
+        # 6. DynamicsProblem with ContinuedFraction
+        dyn_prob = DynamicsProblem(H, psi)
+        @test dyn_prob isa AbstractQuantumProblem
+        sol_dyn = solve(dyn_prob, ContinuedFraction(n_iter=10))
+        @test length(sol_dyn.alphas) > 0
+
+        # 7. SpectralProblem with CorrectionVector
+        spec_prob = SpectralProblem(H, psi, -2.0, 0.5, 0.1)
+        @test spec_prob isa AbstractQuantumProblem
+        sol_spec = solve(spec_prob, CorrectionVector(e0=-2.0, omega=0.5, eta=0.1, maxiter=50, tol=1e-6))
+        @test sol_spec.spectral_function >= 0.0
+    end
+
     @testset "Davidson Solver" begin
         N = 4
         basis = SpinHalfBasis(N)
@@ -296,6 +425,47 @@ using QuantumKrylov
         ftlm_res = ftlm(H, beta=1.0, n_random=5, n_steps=20)
         @test isapprox(ftlm_res.beta, 1.0)
         @test ftlm_res.partition_function > 0.0
+
+        sweep_res = ftlm_sweep(H; betas=[0.5, 1.0, 2.0], observables=[H], n_random=10, n_steps=20, seed=123)
+        @test sweep_res isa FTLMSweepResult
+        @test length(sweep_res.beta_grid) == 3
+        @test all(sweep_res.partition_functions .> 0.0)
+        @test all(sweep_res.specific_heats .>= -1e-12)
+        @test all(sweep_res.entropies .>= -1e-12)
+        @test length(sweep_res.observable_expectations) == 1
+        @test isapprox(sweep_res.observable_expectations[1], sweep_res.internal_energies, rtol=1e-4)
+        @test length(sweep_res.observable_errors) == 1
+        @test all(sweep_res.observable_errors[1] .>= 0.0)
+
+        # Decoupled FTLM testing (Float64)
+        samples = ftlm_sample(H; observables=[H], n_random=10, n_steps=20, seed=123)
+        @test samples isa FTLMSamples{Float64}
+        @test samples.precision === Float64
+
+        decoupled_res = ftlm_evaluate_sweep(samples, [0.5, 1.0, 2.0])
+        @test decoupled_res isa FTLMSweepResult{Float64}
+        @test isapprox(decoupled_res.partition_functions, sweep_res.partition_functions, rtol=1e-10)
+        @test isapprox(decoupled_res.internal_energies, sweep_res.internal_energies, rtol=1e-10)
+
+        # Zero-cost re-evaluation on different beta grid
+        decoupled_res2 = ftlm_evaluate_sweep(samples, [0.1, 0.8, 1.5, 3.0])
+        @test length(decoupled_res2.beta_grid) == 4
+        @test all(decoupled_res2.partition_functions .> 0.0)
+
+        # SciML interface with FTLMSamples
+        th_prob_samples = ThermalProblem(H, [0.5, 1.0, 2.0])
+        sciml_sweep = solve(th_prob_samples, samples)
+        @test sciml_sweep isa FTLMSweepResult{Float64}
+        @test isapprox(sciml_sweep.internal_energies, sweep_res.internal_energies, rtol=1e-10)
+
+        # Decoupled FTLM testing (Float32)
+        H32 = MatrixFreeHamiltonian{Float32}(basis, site, op)
+        samples32 = ftlm_sample(H32; observables=[H32], n_random=10, n_steps=20, seed=123)
+        @test samples32 isa FTLMSamples{Float32}
+        @test samples32.precision === Float32
+        decoupled_res32 = ftlm_evaluate_sweep(samples32, [0.5, 1.0, 2.0])
+        @test decoupled_res32 isa FTLMSweepResult{Float32}
+        @test length(decoupled_res32.beta_grid) == 3
     end
 
     @testset "Device & Hardware Query API" begin
@@ -321,9 +491,19 @@ using QuantumKrylov
         @test dimension(H_cpu) == 4
         @test H_cpu.device == "cpu"
 
+        # Typed device traits
+        H_cpu_trait = MatrixFreeHamiltonian(basis, op; device=CPUDevice())
+        @test H_cpu_trait.device isa AbstractDevice
+        @test H_cpu_trait.device isa CPUDevice
+        @test H_cpu_trait.device == "cpu"
+        @test H_cpu_trait.device == CPUDevice()
+
         # Requesting GPU on CPU build throws an informative ArgumentError
         @test_throws ArgumentError MatrixFreeHamiltonian(basis, op; device="cuda")
         @test_throws ArgumentError MatrixFreeHamiltonian(basis, op; device="gpu")
+        @test_throws ArgumentError MatrixFreeHamiltonian(basis, op; device=CUDADevice())
+        @test_throws ArgumentError MatrixFreeHamiltonian(basis, op; device=HIPDevice())
+        @test_throws ArgumentError MatrixFreeHamiltonian(basis, op; device=SYCLDevice())
     end
 
     @testset "Hubbard & Boson Operator Generators" begin

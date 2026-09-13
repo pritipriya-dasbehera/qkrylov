@@ -1,6 +1,26 @@
 # Device management and hardware query wrappers
 using Libdl
 
+# Hardware Device Traits
+abstract type AbstractDevice end
+struct CPUDevice   <: AbstractDevice end
+struct CUDADevice  <: AbstractDevice end
+struct HIPDevice   <: AbstractDevice end
+struct SYCLDevice  <: AbstractDevice end
+
+device_string(::CPUDevice)  = "cpu"
+device_string(::CUDADevice) = "cuda"
+device_string(::HIPDevice)  = "hip"
+device_string(::SYCLDevice) = "sycl"
+device_string(s::AbstractString) = String(s)
+
+Base.string(d::AbstractDevice) = device_string(d)
+Base.:(==)(::CPUDevice, s::AbstractString) = lowercase(s) == "cpu"
+Base.:(==)(s::AbstractString, d::AbstractDevice) = (d == s)
+Base.:(==)(::CUDADevice, s::AbstractString) = (lowercase(s) == "cuda" || lowercase(s) == "gpu")
+Base.:(==)(::HIPDevice, s::AbstractString) = lowercase(s) == "hip"
+Base.:(==)(::SYCLDevice, s::AbstractString) = lowercase(s) == "sycl"
+
 function _has_symbol(sym::Symbol)::Bool
     try
         h = Libdl.dlopen(libqkrylov, Libdl.RTLD_LAZY | Libdl.RTLD_LOCAL)

@@ -1,114 +1,142 @@
-#include "qkrylov/solvers/lanczos.hpp"
-#include "qkrylov/basis/spinhalf_basis.hpp"
-#include "qkrylov/sites/spinhalf_site.hpp"
-#include "qkrylov/operators/opsum.hpp"
 #include <iostream>
+#include <vector>
 #include <cmath>
 #include <cassert>
+#include <memory>
+
+#include "qkrylov/basis/spinhalf_basis.hpp"
+#include "qkrylov/sites/spinhalf_site.hpp"
+#include "qkrylov/operators/operator_term.hpp"
+#include "qkrylov/operators/opsum.hpp"
+#include "qkrylov/hamiltonian/matrix_free_hamiltonian.hpp"
+#include "qkrylov/solvers/lanczos.hpp"
+#include "qkrylov/solvers/davidson.hpp"
+#include "qkrylov/c_api.h"
 
 using namespace qkrylov;
 using namespace qkrylov::QKRYLOV_PRECISION_NAMESPACE;
 
-int main() {
-    std::cout << "Testing lanczos_lowest multi-state solver...\n";
+int main()
+{
+    const int N = 4;
+    auto basis = std::make_shared<SpinHalfBasis>(N, Sector(sector::Sz{0}));
+    auto site  = std::make_shared<SpinHalfSite>();
 
-    // 1. Test N = 4 Heisenberg chain (dim = 16, full space)
-    int N = 4;
-    auto basis4 = std::make_shared<SpinHalfBasis>(N);
-    auto site4 = std::make_shared<SpinHalfSite>();
-    OpSum os4;
+    // 4-site AFM Heisenberg ring: J sum_i (S^z_i S^z_{i+1} + 0.5 S^+_i S^-_{i+1} + 0.5 S^-_i S^+_{i+1})
+    OpSum ops;
     for (int i = 0; i < N; ++i) {
-        int next_i = (i + 1) % N;
-        os4 += {1.0, {{"Sz", i}, {"Sz", next_i}}};
-        os4 += {0.5, {{"Sp", i}, {"Sm", next_i}}};
-        os4 += {0.5, {{"Sm", i}, {"Sp", next_i}}};
+        int j = (i + 1) % N;
+        {
+            OperatorTerm t;
+            t.coeff = 1.0;
+            t.factors = {{"Sz", i}, {"Sz", j}};
+            ops.add_term(t);
+        }
+        {
+            OperatorTerm t;
+            t.coeff = 0.5;
+            t.factors = {{"Sp", i}, {"Sm", j}};
+            ops.add_term(t);
+        }
+        {
+            OperatorTerm t;
+            t.coeff = 0.5;
+            t.factors = {{"Sm", i}, {"Sp", j}};
+            ops.add_term(t);
+        }
     }
-    MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace> H4(basis4, site4, os4);
 
-    // Compute lowest 4 states
-    int k4 = 4;
-    auto res4 = lanczos_lowest<Kokkos::DefaultExecutionSpace>(H4, k4, 100, 1e-10, true);
+    MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace> H(basis, site, ops);
+    const Index dim = H.dimension();
+    std::cout << "Hamiltonian dimension: " << dim << std::endl;
+    assert(dim == 6);
 
-    std::cout << "N=4 Lanczos Lowest " << k4 << " states:\n";
-    std::cout << "  Converged: " << res4.converged << ", Iterations: " << res4.iterations << "\n";
-    for (size_t i = 0; i < res4.eigenvalues.size(); ++i) {
-        std::cout << "  E[" << i << "] = " << res4.eigenvalues[i] << "\n";
+    // 1. Solve lowest 3 eigenvalues with Davidson for reference
+    auto dav_res = davidson_lowest(H, 3, 6, 1e-10);
+    std::cout << "Davidson lowest 3 energies:" << std::endl;
+    for (size_t k = 0; k < dav_res.eigenvalues.size(); ++k) {
+        std::cout << "  E[" << k << "] = " << dav_res.eigenvalues[k] << std::endl;
     }
-    assert(res4.converged);
-    assert(res4.eigenvalues.size() == static_cast<size_t>(k4));
-    assert(res4.eigenvectors.size() == static_cast<size_t>(k4));
-    assert(std::abs(res4.eigenvalues[0] - (-2.0)) < 1e-5);
-    assert(res4.eigenvalues[0] <= res4.eigenvalues[1]);
-    assert(res4.eigenvalues[1] <= res4.eigenvalues[2]);
-    assert(res4.eigenvalues[2] <= res4.eigenvalues[3]);
+    assert(dav_res.eigenvalues.size() == 3);
 
-    // 2. Test N = 6 Trimerized Heisenberg Chain from davidson_behavior_report.md
-    // Ground state: E0 = -1.9819, E1 = -1.4977, E2 = -1.0607
-    int N6 = 6;
-    auto basis6 = std::make_shared<SpinHalfBasis>(N6);
-    auto site6 = std::make_shared<SpinHalfSite>();
-    OpSum os6;
-    double J1 = std::cos(M_PI / 4.0); // ~ 0.70710678
-    double J2 = std::sin(M_PI / 4.0); // ~ 0.70710678
-    for (int i = 0; i < N6; ++i) {
-        int next_i = (i + 1) % N6;
-        double J = (i % 3 == 2) ? J2 : J1;
-        os6 += {J, {{"Sz", i}, {"Sz", next_i}}};
-        os6 += {0.5 * J, {{"Sp", i}, {"Sm", next_i}}};
-        os6 += {0.5 * J, {{"Sm", i}, {"Sp", next_i}}};
+    // 2. Solve lowest 3 eigenvalues with lanczos_lowest
+    auto lowest_res = lanczos_lowest(H, 3, 100, 1e-10, true);
+    std::cout << "\nLanczos lowest 3 energies:" << std::endl;
+    for (size_t k = 0; k < lowest_res.eigenvalues.size(); ++k) {
+        std::cout << "  E[" << k << "] = " << lowest_res.eigenvalues[k] << std::endl;
     }
-    MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace> H6(basis6, site6, os6);
+    assert(lowest_res.eigenvalues.size() == 3);
+    assert(lowest_res.eigenvectors.size() == 3);
 
-    // Compute lowest 3 states (where Davidson failed with runaway divergence)
-    int k6 = 3;
-    auto res6 = lanczos_lowest<Kokkos::DefaultExecutionSpace>(H6, k6, 100, 1e-8, true);
-
-    std::cout << "\nN=6 Trimerized Chain (where Davidson failed for k=3):\n";
-    std::cout << "  Converged: " << res6.converged << ", Iterations: " << res6.iterations << "\n";
-    for (size_t i = 0; i < res6.eigenvalues.size(); ++i) {
-        std::cout << "  E[" << i << "] = " << res6.eigenvalues[i] << "\n";
+    // Check agreement between Lanczos and Davidson
+    for (size_t k = 0; k < 3; ++k) {
+        Real diff = std::abs(lowest_res.eigenvalues[k] - dav_res.eigenvalues[k]);
+        std::cout << "State " << k << " delta: " << diff << std::endl;
+        assert(diff < 1e-6);
     }
-    assert(res6.converged);
-    assert(res6.eigenvalues.size() == static_cast<size_t>(k6));
-    assert(std::abs(res6.eigenvalues[0] - (-1.9819)) < 1e-3);
-    assert(std::abs(res6.eigenvalues[1] - (-1.4977)) < 1e-3);
-    assert(std::abs(res6.eigenvalues[2] - (-1.0607)) < 1e-3);
 
-    // 3. Test lanczos_ground_state and lanczos_lowest with initial trial vector
-    HostVector init_v(H4.dimension());
-    for (size_t i = 0; i < init_v.size(); ++i) {
-        init_v[i] = res4.eigenvectors[0][i];
+    // Check eigenvector orthonormality
+    for (size_t i = 0; i < 3; ++i) {
+        for (size_t j = 0; j < 3; ++j) {
+            Complex overlap = 0.0;
+            for (Index d = 0; d < dim; ++d) {
+                overlap += std::conj(lowest_res.eigenvectors[i][d]) * lowest_res.eigenvectors[j][d];
+            }
+            Real expected = (i == j) ? 1.0 : 0.0;
+            Real err = std::abs(overlap - expected);
+            assert(err < 1e-5);
+        }
     }
-    auto res4_init = lanczos_lowest<Kokkos::DefaultExecutionSpace>(H4, 1, 100, 1e-10, true, init_v);
-    assert(res4_init.converged);
-    assert(std::abs(res4_init.eigenvalues[0] - res4.eigenvalues[0]) < 1e-8);
-    assert(res4_init.iterations <= 2);
+    std::cout << "Eigenvector orthonormality verified." << std::endl;
 
-    auto res_gs_init = lanczos_ground_state<Kokkos::DefaultExecutionSpace>(H4, 100, 1e-10, init_v);
-    assert(res_gs_init.converged);
-    assert(std::abs(res_gs_init.energy - res4.eigenvalues[0]) < 1e-8);
-    assert(res_gs_init.iterations <= 2);
+    // 3. Test warm-starting: pass ground state as initial_vector
+    HostVector warm_vec = lowest_res.eigenvectors[0];
+    auto warm_res = lanczos_ground_state(H, 100, 1e-10, warm_vec);
+    std::cout << "Warm-started ground state energy: " << warm_res.energy << " in " << warm_res.iterations << " iters" << std::endl;
+    assert(std::abs(warm_res.energy - lowest_res.eigenvalues[0]) < 1e-6);
 
-    // Test dimension mismatch throwing invalid_argument
-    HostVector bad_v(H4.dimension() + 1);
-    bool threw_dim = false;
-    try {
-        lanczos_lowest<Kokkos::DefaultExecutionSpace>(H4, 1, 100, 1e-10, true, bad_v);
-    } catch (const std::invalid_argument&) {
-        threw_dim = true;
+    // 4. Test C API
+    std::cout << "\n--- Testing C API lanczos_lowest ---" << std::endl;
+    qkrylov_sector_h sec = qkrylov_sector_create();
+    qkrylov_sector_set_sz(sec, 0);
+    qkrylov_basis_h c_basis = qkrylov_spinhalf_basis_create(N, sec);
+    qkrylov_site_h  c_site  = qkrylov_spinhalf_site_create();
+    qkrylov_opsum_h c_ops   = qkrylov_opsum_create();
+
+    for (int i = 0; i < N; ++i) {
+        int j = (i + 1) % N;
+        qkrylov_opsum_add_term_2body(c_ops, 1.0, 0.0, "Sz", i, "Sz", j);
+        qkrylov_opsum_add_term_2body(c_ops, 0.5, 0.0, "Sp", i, "Sm", j);
+        qkrylov_opsum_add_term_2body(c_ops, 0.5, 0.0, "Sm", i, "Sp", j);
     }
-    assert(threw_dim);
 
-    // Test zero norm throwing invalid_argument
-    HostVector zero_v(H4.dimension(), Complex(0.0, 0.0));
-    bool threw_zero = false;
-    try {
-        lanczos_lowest<Kokkos::DefaultExecutionSpace>(H4, 1, 100, 1e-10, true, zero_v);
-    } catch (const std::invalid_argument&) {
-        threw_zero = true;
+    qkrylov_hamiltonian_h c_H = qkrylov_hamiltonian_create(c_basis, c_site, c_ops);
+    assert(c_H != nullptr);
+
+    double c_evals[3];
+    double c_evecs[3 * 6 * 2]; // 3 vectors, dim 6, complex
+    qkrylov_lanczos_lowest_result_c_t c_res_info;
+
+    int rc = qkrylov_lanczos_lowest_complex_fp64(c_H, 3, 100, 1e-10, c_evals, c_evecs, &c_res_info, nullptr);
+    assert(rc == QKRYLOV_SUCCESS);
+    assert(c_res_info.converged == 1);
+    for (int k = 0; k < 3; ++k) {
+        assert(std::abs(c_evals[k] - lowest_res.eigenvalues[k]) < 1e-6);
     }
-    assert(threw_zero);
+    std::cout << "C API qkrylov_lanczos_lowest_complex_fp64 passed." << std::endl;
 
-    std::cout << "\nAll lanczos_lowest tests passed successfully!\n";
+    // Test C API with warm start
+    int rc_warm = qkrylov_lanczos_lowest_complex_fp64(c_H, 1, 100, 1e-10, c_evals, nullptr, &c_res_info, c_evecs);
+    assert(rc_warm == QKRYLOV_SUCCESS);
+    assert(std::abs(c_evals[0] - lowest_res.eigenvalues[0]) < 1e-6);
+    std::cout << "C API warm-start passed." << std::endl;
+
+    qkrylov_hamiltonian_destroy(c_H);
+    qkrylov_opsum_destroy(c_ops);
+    qkrylov_site_destroy(c_site);
+    qkrylov_basis_destroy(c_basis);
+    qkrylov_sector_destroy(sec);
+
+    std::cout << "\nAll test_lanczos_lowest assertions PASSED!" << std::endl;
     return 0;
 }

@@ -43,6 +43,7 @@ using namespace qkrylov::QKRYLOV_PRECISION_NAMESPACE;
 using Scalar = double;
 using LanczosResT = qkrylov_lanczos_result_fp64_t;
 using FTLMResT = qkrylov_ftlm_result_fp64_t;
+using FTLMSweepResT = qkrylov_ftlm_sweep_result_fp64_t;
 using CorrVecResT = qkrylov_correction_vector_result_fp64_t;
 #else
 #define SUFFIX(name) name##_fp32
@@ -50,6 +51,7 @@ using CorrVecResT = qkrylov_correction_vector_result_fp64_t;
 using Scalar = float;
 using LanczosResT = qkrylov_lanczos_result_fp32_t;
 using FTLMResT = qkrylov_ftlm_result_fp32_t;
+using FTLMSweepResT = qkrylov_ftlm_sweep_result_fp32_t;
 using CorrVecResT = qkrylov_correction_vector_result_fp32_t;
 #endif
 
@@ -121,8 +123,14 @@ inline std::shared_ptr<Basis> get_or_create_basis(const qkrylov_basis_t& b) {
     if (b.ptr64) {
         return std::static_pointer_cast<Basis>(b.ptr64);
     }
+    if (b.ptr32) {
+        auto ptr = std::static_pointer_cast<Basis>(b.ptr32);
+        b.ptr64 = ptr;
+        return ptr;
+    }
     auto ptr = make_basis_from_descriptor(b);
     b.ptr64 = ptr;
+    b.ptr32 = ptr;
     if (ptr) b.cached_dim = ptr->size();
     return ptr;
 }
@@ -139,8 +147,14 @@ inline std::shared_ptr<Basis> get_or_create_basis(const qkrylov_basis_t& b) {
     if (b.ptr32) {
         return std::static_pointer_cast<Basis>(b.ptr32);
     }
+    if (b.ptr64) {
+        auto ptr = std::static_pointer_cast<Basis>(b.ptr64);
+        b.ptr32 = ptr;
+        return ptr;
+    }
     auto ptr = make_basis_from_descriptor(b);
     b.ptr32 = ptr;
+    b.ptr64 = ptr;
     if (ptr) b.cached_dim = ptr->size();
     return ptr;
 }
@@ -209,8 +223,8 @@ inline auto run_binary_read(uint64_t dim, const Scalar* x, const Scalar* y, Func
 template <typename Func>
 inline void run_binary_mut(uint64_t dim, const Scalar* x, Scalar* y, Func&& op) {
     using ExecSpace = Kokkos::DefaultExecutionSpace;
-    auto x_host = Kokkos::View<const KComplex*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>(
-        reinterpret_cast<const KComplex*>(x), dim);
+    auto x_host = Kokkos::View<KComplex*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>(
+        const_cast<KComplex*>(reinterpret_cast<const KComplex*>(x)), dim);
     auto y_host = Kokkos::View<KComplex*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>(
         reinterpret_cast<KComplex*>(y), dim);
     if constexpr (Kokkos::SpaceAccessibility<ExecSpace, Kokkos::HostSpace>::accessible) {
@@ -482,7 +496,7 @@ int SUFFIX(qkrylov_lanczos_ground_state)(
     Scalar tol,
     LanczosResT* result)
 {
-    return SUFFIX(qkrylov_lanczos_ground_state_complex)(h, maxiter, tol, result, nullptr, nullptr);
+    return SUFFIX(qkrylov_lanczos_ground_state_complex)(h, maxiter, tol, result, nullptr);
 }
 
 int SUFFIX(qkrylov_lanczos_ground_state_complex)(
@@ -490,8 +504,7 @@ int SUFFIX(qkrylov_lanczos_ground_state_complex)(
     int maxiter,
     Scalar tol,
     LanczosResT* result,
-    Scalar* eigenvector_complex,
-    const Scalar* initial_vector_complex)
+    Scalar* eigenvector_complex)
 {
     if (!h) {
         set_last_error("qkrylov_lanczos_ground_state_complex: hamiltonian handle is null");
@@ -511,15 +524,12 @@ int SUFFIX(qkrylov_lanczos_ground_state_complex)(
     }
     try {
         auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
-        HostVector init_v;
-        if (initial_vector_complex) {
-            init_v.resize(h->dim);
-            for (uint64_t i = 0; i < h->dim; ++i) {
-                init_v[i] = Complex(static_cast<Real>(initial_vector_complex[2 * i]),
-                                    static_cast<Real>(initial_vector_complex[2 * i + 1]));
-            }
-        }
-        auto res = lanczos_ground_state(*H, maxiter, static_cast<Real>(tol), init_v);
+        LanczosConfig cfg;
+        cfg.maxiter = maxiter;
+        cfg.tol = static_cast<Real>(tol);
+        auto res = eigenvector_complex
+            ? solvers::lanczos<solvers::policy::OnePass_DKGS>(*H, cfg)
+            : solvers::lanczos<solvers::policy::OnePass>(*H, cfg);
         result->energy     = static_cast<Scalar>(res.energy);
         result->iterations = res.iterations;
         result->converged  = res.converged ? 1 : 0;
@@ -535,6 +545,63 @@ int SUFFIX(qkrylov_lanczos_ground_state_complex)(
         return QKRYLOV_ERROR_EXCEPTION;
     } catch (...) {
         set_last_error("Unknown exception in qkrylov_lanczos_ground_state_complex");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+int SUFFIX(qkrylov_lanczos_two_pass_ground_state)(
+    qkrylov_hamiltonian_h h,
+    int maxiter,
+    Scalar tol,
+    LanczosResT* result)
+{
+    return SUFFIX(qkrylov_lanczos_two_pass_ground_state_complex)(h, maxiter, tol, result, nullptr);
+}
+
+int SUFFIX(qkrylov_lanczos_two_pass_ground_state_complex)(
+    qkrylov_hamiltonian_h h,
+    int maxiter,
+    Scalar tol,
+    LanczosResT* result,
+    Scalar* eigenvector_complex)
+{
+    if (!h) {
+        set_last_error("qkrylov_lanczos_two_pass_ground_state_complex: hamiltonian handle is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (h->precision != PREC_ID) {
+        set_last_error("qkrylov_lanczos_two_pass_ground_state_complex: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (!h->impl || !result) {
+        set_last_error("qkrylov_lanczos_two_pass_ground_state_complex: null result pointer or uninitialized hamiltonian");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (maxiter <= 0) {
+        set_last_error("qkrylov_lanczos_two_pass_ground_state_complex: maxiter must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    try {
+        auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
+        LanczosConfig cfg;
+        cfg.maxiter = maxiter;
+        cfg.tol = static_cast<Real>(tol);
+        auto res = solvers::lanczos<solvers::policy::TwoPass>(*H, cfg);
+        result->energy     = static_cast<Scalar>(res.energy);
+        result->iterations = res.iterations;
+        result->converged  = res.converged ? 1 : 0;
+        if (eigenvector_complex && !res.eigenvector.empty()) {
+            for (size_t i = 0; i < res.eigenvector.size(); ++i) {
+                eigenvector_complex[2 * i]     = static_cast<Scalar>(res.eigenvector[i].real());
+                eigenvector_complex[2 * i + 1] = static_cast<Scalar>(res.eigenvector[i].imag());
+            }
+        }
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_lanczos_two_pass_ground_state_complex");
         return QKRYLOV_ERROR_EXCEPTION;
     }
 }
@@ -580,7 +647,13 @@ int SUFFIX(qkrylov_lanczos_lowest_complex)(
                                     static_cast<Real>(initial_vector_complex[2 * i + 1]));
             }
         }
-        auto res = lanczos_lowest(*H, n_eig, maxiter, static_cast<Real>(tol), compute_evecs, init_v);
+        LanczosConfig cfg;
+        cfg.n_eig = n_eig;
+        cfg.maxiter = maxiter;
+        cfg.tol = static_cast<Real>(tol);
+        cfg.compute_eigenvectors = compute_evecs;
+        cfg.initial_vector = std::move(init_v);
+        auto res = solvers::lanczos_lowest(*H, cfg);
         const size_t k = std::min(static_cast<size_t>(n_eig), res.eigenvalues.size());
         for (size_t i = 0; i < k; ++i) {
             eigenvalues_out[i] = static_cast<Scalar>(res.eigenvalues[i]);
@@ -811,6 +884,229 @@ int SUFFIX(qkrylov_ftlm)(
         set_last_error("Unknown exception in qkrylov_ftlm");
         return QKRYLOV_ERROR_EXCEPTION;
     }
+}
+
+static void copy_ftlm_sweep_result(const FTLMSweepResult& sweep, int num_betas, int num_observables, FTLMSweepResT* result) {
+    result->num_betas = num_betas;
+    result->num_observables = num_observables;
+
+    auto* out_betas = new Scalar[num_betas];
+    auto* out_z = new Scalar[num_betas];
+    auto* out_f = new Scalar[num_betas];
+    auto* out_e = new Scalar[num_betas];
+    auto* out_cv = new Scalar[num_betas];
+    auto* out_s = new Scalar[num_betas];
+    for (int bi = 0; bi < num_betas; ++bi) {
+        out_betas[bi] = static_cast<Scalar>(sweep.beta_grid[bi]);
+        out_z[bi] = static_cast<Scalar>(sweep.partition_functions[bi]);
+        out_f[bi] = static_cast<Scalar>(sweep.free_energies[bi]);
+        out_e[bi] = static_cast<Scalar>(sweep.internal_energies[bi]);
+        out_cv[bi] = static_cast<Scalar>(sweep.specific_heats[bi]);
+        out_s[bi] = static_cast<Scalar>(sweep.entropies[bi]);
+    }
+    result->beta_grid = out_betas;
+    result->partition_functions = out_z;
+    result->free_energies = out_f;
+    result->internal_energies = out_e;
+    result->specific_heats = out_cv;
+    result->entropies = out_s;
+
+    if (num_observables > 0) {
+        auto* out_obs = new Scalar[num_observables * num_betas];
+        auto* out_err = new Scalar[num_observables * num_betas];
+        for (int oi = 0; oi < num_observables; ++oi) {
+            for (int bi = 0; bi < num_betas; ++bi) {
+                out_obs[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_expectations[oi][bi]);
+                out_err[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_errors[oi][bi]);
+            }
+        }
+        result->observable_expectations = out_obs;
+        result->observable_errors = out_err;
+    } else {
+        result->observable_expectations = nullptr;
+        result->observable_errors = nullptr;
+    }
+}
+
+int SUFFIX(qkrylov_ftlm_sample)(
+    qkrylov_hamiltonian_h h,
+    const qkrylov_hamiltonian_h* observables,
+    int num_observables,
+    int n_random,
+    int n_steps,
+    uint64_t seed,
+    qkrylov_ftlm_samples_h* out_samples)
+{
+    if (!h) {
+        set_last_error("qkrylov_ftlm_sample: hamiltonian handle is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (h->precision != PREC_ID) {
+        set_last_error("qkrylov_ftlm_sample: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (!h->impl || !out_samples) {
+        set_last_error("qkrylov_ftlm_sample: null pointer argument");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (n_random <= 0 || n_steps <= 0) {
+        set_last_error("qkrylov_ftlm_sample: n_random and n_steps must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (num_observables > 0 && !observables) {
+        set_last_error("qkrylov_ftlm_sample: observables array is null but num_observables > 0");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+
+    try {
+        auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
+
+        std::vector<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>> obs_vec;
+        obs_vec.reserve(num_observables);
+        for (int i = 0; i < num_observables; ++i) {
+            if (!observables[i] || observables[i]->precision != PREC_ID || !observables[i]->impl) {
+                set_last_error("qkrylov_ftlm_sample: invalid observable handle");
+                return QKRYLOV_ERROR_INVALID_ARG;
+            }
+            obs_vec.push_back(*static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(observables[i]->impl.get()));
+        }
+
+        auto samples = ftlm_sample<Kokkos::DefaultExecutionSpace>(*H, obs_vec, n_random, n_steps, seed);
+
+        auto handle = new qkrylov_ftlm_samples_t();
+        handle->precision = PREC_ID;
+        handle->impl = std::make_shared<std::vector<FTLMKrylovSample>>(std::move(samples));
+        *out_samples = handle;
+
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_ftlm_sample");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+int SUFFIX(qkrylov_ftlm_evaluate_sweep)(
+    qkrylov_ftlm_samples_h samples,
+    const Scalar* beta_grid,
+    int num_betas,
+    FTLMSweepResT* result)
+{
+    if (!samples) {
+        set_last_error("qkrylov_ftlm_evaluate_sweep: samples handle is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (samples->precision != PREC_ID) {
+        set_last_error("qkrylov_ftlm_evaluate_sweep: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (!samples->impl || !beta_grid || num_betas <= 0 || !result) {
+        set_last_error("qkrylov_ftlm_evaluate_sweep: null pointer or invalid beta_grid");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+
+    try {
+        auto* sample_vec = static_cast<std::vector<FTLMKrylovSample>*>(samples->impl.get());
+        std::vector<Real> betas(num_betas);
+        for (int i = 0; i < num_betas; ++i) betas[i] = static_cast<Real>(beta_grid[i]);
+
+        auto sweep = ftlm_evaluate_sweep(*sample_vec, betas);
+        int num_obs = static_cast<int>(sweep.observable_expectations.size());
+        copy_ftlm_sweep_result(sweep, num_betas, num_obs, result);
+
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_ftlm_evaluate_sweep");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+int SUFFIX(qkrylov_ftlm_sweep)(
+    qkrylov_hamiltonian_h h,
+    const Scalar* beta_grid,
+    int num_betas,
+    const qkrylov_hamiltonian_h* observables,
+    int num_observables,
+    int n_random,
+    int n_steps,
+    uint64_t seed,
+    FTLMSweepResT* result)
+{
+    if (!h) {
+        set_last_error("qkrylov_ftlm_sweep: hamiltonian handle is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (h->precision != PREC_ID) {
+        set_last_error("qkrylov_ftlm_sweep: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (!h->impl || !beta_grid || num_betas <= 0 || !result) {
+        set_last_error("qkrylov_ftlm_sweep: null pointer or invalid beta_grid");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (n_random <= 0 || n_steps <= 0) {
+        set_last_error("qkrylov_ftlm_sweep: n_random and n_steps must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (num_observables > 0 && !observables) {
+        set_last_error("qkrylov_ftlm_sweep: observables array is null but num_observables > 0");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+
+    try {
+        auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
+        std::vector<Real> betas(num_betas);
+        for (int i = 0; i < num_betas; ++i) betas[i] = static_cast<Real>(beta_grid[i]);
+
+        std::vector<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>> obs_vec;
+        obs_vec.reserve(num_observables);
+        for (int i = 0; i < num_observables; ++i) {
+            if (!observables[i] || observables[i]->precision != PREC_ID || !observables[i]->impl) {
+                set_last_error("qkrylov_ftlm_sweep: invalid observable handle");
+                return QKRYLOV_ERROR_INVALID_ARG;
+            }
+            obs_vec.push_back(*static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(observables[i]->impl.get()));
+        }
+
+        auto sweep = ftlm_sweep<Kokkos::DefaultExecutionSpace>(*H, betas, obs_vec, n_random, n_steps, seed);
+
+        copy_ftlm_sweep_result(sweep, num_betas, num_observables, result);
+
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_ftlm_sweep");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+void SUFFIX(qkrylov_ftlm_sweep_result_free)(FTLMSweepResT* result) {
+    if (!result) return;
+    delete[] result->beta_grid;
+    delete[] result->partition_functions;
+    delete[] result->free_energies;
+    delete[] result->internal_energies;
+    delete[] result->specific_heats;
+    delete[] result->entropies;
+    delete[] result->observable_expectations;
+    delete[] result->observable_errors;
+    result->beta_grid = nullptr;
+    result->partition_functions = nullptr;
+    result->free_energies = nullptr;
+    result->internal_energies = nullptr;
+    result->specific_heats = nullptr;
+    result->entropies = nullptr;
+    result->observable_expectations = nullptr;
+    result->observable_errors = nullptr;
+    result->num_betas = 0;
+    result->num_observables = 0;
 }
 
 int SUFFIX(qkrylov_solver_correction_vector)(

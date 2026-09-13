@@ -5,21 +5,36 @@ mutable struct MatrixFreeHamiltonian{T<:Union{Float32, Float64}}
     basis::AbstractBasis
     site::AbstractSite
     opsum::OpSum
-    device::String
+    device::AbstractDevice
     precision::Type{T}
 
     function MatrixFreeHamiltonian{T}(
         basis::AbstractBasis,
         site::AbstractSite,
         opsum::OpSum;
-        device::AbstractString="cpu"
+        device::Union{AbstractDevice, AbstractString} = CPUDevice()
     ) where {T<:Union{Float32, Float64}}
         validate!(opsum, nsites(basis))
 
-        d_lower = lowercase(device)
+        dev_str = device_string(device)
+        d_lower = lowercase(dev_str)
         if occursin("cuda", d_lower) || occursin("hip", d_lower) || occursin("sycl", d_lower) || d_lower == "gpu"
             if !is_gpu_build()
                 throw(ArgumentError("QKrylov was not built with GPU support. Install/compile a GPU build of libqkrylov with Kokkos CUDA/HIP enabled."))
+            end
+        end
+
+        dev_trait = if device isa AbstractDevice
+            device
+        else
+            if occursin("cuda", d_lower) || d_lower == "gpu"
+                CUDADevice()
+            elseif occursin("hip", d_lower)
+                HIPDevice()
+            elseif occursin("sycl", d_lower)
+                SYCLDevice()
+            else
+                CPUDevice()
             end
         end
 
@@ -28,26 +43,26 @@ mutable struct MatrixFreeHamiltonian{T<:Union{Float32, Float64}}
                 (:qkrylov_hamiltonian_create_device_fp32, libqkrylov),
                 Ptr{Cvoid},
                 (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring),
-                basis.ptr, site.ptr, opsum.ptr, device
+                basis.ptr, site.ptr, opsum.ptr, dev_str
             )
         else
             ccall(
                 (:qkrylov_hamiltonian_create_device_fp64, libqkrylov),
                 Ptr{Cvoid},
                 (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring),
-                basis.ptr, site.ptr, opsum.ptr, device
+                basis.ptr, site.ptr, opsum.ptr, dev_str
             )
         end
         if ptr == C_NULL
             err = get_last_error_message()
             if !isempty(err)
-                error("Failed to create MatrixFreeHamiltonian on device: $device with precision: $T: $err")
+                error("Failed to create MatrixFreeHamiltonian on device: $dev_str with precision: $T: $err")
             else
-                error("Failed to create MatrixFreeHamiltonian on device: $device with precision: $T")
+                error("Failed to create MatrixFreeHamiltonian on device: $dev_str with precision: $T")
             end
         end
 
-        obj = new{T}(ptr, basis, site, opsum, String(device), T)
+        obj = new{T}(ptr, basis, site, opsum, dev_trait, T)
         finalizer(obj) do o
             if o.ptr != C_NULL
                 ccall((:qkrylov_hamiltonian_destroy, libqkrylov), Cvoid, (Ptr{Cvoid},), o.ptr)
@@ -62,8 +77,8 @@ function MatrixFreeHamiltonian(
     basis::AbstractBasis,
     site::AbstractSite,
     opsum::OpSum;
-    device::AbstractString="cpu",
-    precision::Type{<:Union{Float32, Float64}}=(occursin("cuda", lowercase(device)) || occursin("hip", lowercase(device)) || occursin("sycl", lowercase(device)) || lowercase(device) == "gpu") ? Float32 : Float64
+    device::Union{AbstractDevice, AbstractString} = CPUDevice(),
+    precision::Type{<:Union{Float32, Float64}} = (device isa CUDADevice || device isa HIPDevice || device isa SYCLDevice || occursin("cuda", lowercase(device_string(device))) || occursin("hip", lowercase(device_string(device))) || occursin("sycl", lowercase(device_string(device))) || lowercase(device_string(device)) == "gpu") ? Float32 : Float64
 )
     return MatrixFreeHamiltonian{precision}(basis, site, opsum; device=device)
 end
@@ -80,8 +95,8 @@ end
 function MatrixFreeHamiltonian(
     basis::AbstractBasis,
     opsum::OpSum;
-    device::AbstractString="cpu",
-    precision::Type{<:Union{Float32, Float64}}=(occursin("cuda", lowercase(device)) || occursin("hip", lowercase(device)) || occursin("sycl", lowercase(device)) || lowercase(device) == "gpu") ? Float32 : Float64
+    device::Union{AbstractDevice, AbstractString} = CPUDevice(),
+    precision::Type{<:Union{Float32, Float64}} = (device isa CUDADevice || device isa HIPDevice || device isa SYCLDevice || occursin("cuda", lowercase(device_string(device))) || occursin("hip", lowercase(device_string(device))) || occursin("sycl", lowercase(device_string(device))) || lowercase(device_string(device)) == "gpu") ? Float32 : Float64
 )
     site = default_site(basis)
     return MatrixFreeHamiltonian{precision}(basis, site, opsum; device=device)
@@ -90,7 +105,7 @@ end
 function MatrixFreeHamiltonian{T}(
     basis::AbstractBasis,
     opsum::OpSum;
-    device::AbstractString="cpu"
+    device::Union{AbstractDevice, AbstractString} = CPUDevice()
 ) where {T<:Union{Float32, Float64}}
     site = default_site(basis)
     return MatrixFreeHamiltonian{T}(basis, site, opsum; device=device)

@@ -42,6 +42,9 @@ cuda = [
     "nvidia-cuda-runtime-cu12",
     "nvidia-cublas-cu12",
 ]
+docs = [
+    "zensical",
+]
 
 [project.urls]
 Homepage = "https://github.com/sjp95/qkrylov"
@@ -75,4 +78,4 @@ version_scheme = "no-guess-dev"
 fallback_version = "0.0.0.dev0"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "bindings/python/tests"]

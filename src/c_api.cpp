@@ -1089,9 +1089,23 @@ int qkrylov_lanczos_ground_state_complex(qkrylov_hamiltonian_h h,
                                          int maxiter,
                                          double tol,
                                          qkrylov_lanczos_result_c_t* result,
-                                         double* eigenvector_complex,
-                                         const double* initial_vector_complex) {
-    return qkrylov_lanczos_ground_state_complex_fp64(h, maxiter, tol, result, eigenvector_complex, initial_vector_complex);
+                                         double* eigenvector_complex) {
+    return qkrylov_lanczos_ground_state_complex_fp64(h, maxiter, tol, result, eigenvector_complex);
+}
+
+int qkrylov_lanczos_two_pass_ground_state(qkrylov_hamiltonian_h h,
+                                          int maxiter,
+                                          double tol,
+                                          qkrylov_lanczos_result_c_t* result) {
+    return qkrylov_lanczos_two_pass_ground_state_fp64(h, maxiter, tol, result);
+}
+
+int qkrylov_lanczos_two_pass_ground_state_complex(qkrylov_hamiltonian_h h,
+                                                  int maxiter,
+                                                  double tol,
+                                                  qkrylov_lanczos_result_c_t* result,
+                                                  double* eigenvector_complex) {
+    return qkrylov_lanczos_two_pass_ground_state_complex_fp64(h, maxiter, tol, result, eigenvector_complex);
 }
 
 int qkrylov_lanczos_lowest_complex(qkrylov_hamiltonian_h h,
@@ -1142,6 +1156,52 @@ int qkrylov_ftlm(qkrylov_hamiltonian_h h,
                  qkrylov_ftlm_result_c_t* result) {
     return qkrylov_ftlm_fp64(h, beta, n_random, n_steps, result);
 }
+
+int qkrylov_ftlm_sweep(qkrylov_hamiltonian_h h,
+                       const double* beta_grid,
+                       int num_betas,
+                       const qkrylov_hamiltonian_h* observables,
+                       int num_observables,
+                       int n_random,
+                       int n_steps,
+                       uint64_t seed,
+                       qkrylov_ftlm_sweep_result_c_t* result) {
+    return qkrylov_ftlm_sweep_fp64(h, beta_grid, num_betas, observables, num_observables, n_random, n_steps, seed, result);
+}
+
+void qkrylov_ftlm_sweep_result_free(qkrylov_ftlm_sweep_result_c_t* result) {
+    qkrylov_ftlm_sweep_result_free_fp64(result);
+}
+
+int qkrylov_ftlm_sample(qkrylov_hamiltonian_h h,
+                        const qkrylov_hamiltonian_h* observables,
+                        int num_observables,
+                        int n_random,
+                        int n_steps,
+                        uint64_t seed,
+                        qkrylov_ftlm_samples_h* out_samples) {
+    return qkrylov_ftlm_sample_fp64(h, observables, num_observables, n_random, n_steps, seed, out_samples);
+}
+
+int qkrylov_ftlm_evaluate_sweep(qkrylov_ftlm_samples_h samples,
+                                const double* beta_grid,
+                                int num_betas,
+                                qkrylov_ftlm_sweep_result_c_t* result) {
+    return qkrylov_ftlm_evaluate_sweep_fp64(samples, beta_grid, num_betas, result);
+}
+
+void qkrylov_ftlm_samples_destroy(qkrylov_ftlm_samples_h samples) {
+    if (samples) delete samples;
+}
+
+int qkrylov_ftlm_samples_precision(qkrylov_ftlm_samples_h samples) {
+    if (!samples) {
+        set_last_error("qkrylov_ftlm_samples_precision: samples handle is null");
+        return -1;
+    }
+    return samples->precision;
+}
+
 
 int qkrylov_solver_correction_vector(qkrylov_hamiltonian_h h,
                                      const double* op_psi0_complex,
