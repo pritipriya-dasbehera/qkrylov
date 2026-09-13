@@ -25,8 +25,10 @@
     - [13.1 Lanczos Solvers (Single-Pass, Two-Pass & DGKS)](#131-lanczos-solvers-single-pass-two-pass--dgks)
     - [13.2 Block Davidson Solver](#132-block-davidson-solver)
     - [13.3 Continued Fraction Dynamical Green's Functions](#133-continued-fraction-dynamical-greens-functions)
-    - [13.4 Finite-Temperature Lanczos Method (FTLM Sweep)](#134-finite-temperature-lanczos-method-ftlm-sweep)
-    - [13.5 Correction Vector Method (Spectroscopy)](#135-correction-vector-method-spectroscopy)
+    - [13.4 Finite-Temperature Lanczos Method (Dual Workflows: Streamed & Cached)](#134-finite-temperature-lanczos-method-dual-workflows-streamed--cached)
+    - [13.5 Pure-State Real-Time Dynamics (time_evolve)](#135-pure-state-real-time-dynamics-time_evolve)
+    - [13.6 Finite-Temperature Dynamical Correlators (ftlm_dynamics)](#136-finite-temperature-dynamical-correlators-ftlm_dynamics)
+    - [13.7 Correction Vector Method (Spectroscopy)](#137-correction-vector-method-spectroscopy)
 14. [Comprehensive End-to-End Julia Usage Examples](#14-comprehensive-end-to-end-julia-usage-examples)
 
 ---
@@ -446,36 +448,73 @@ cf = continued_fraction_coeffs(H, phi0; n_iter=100)
 S_omega = evaluate_spectral_function(cf.alphas, cf.betas, cf.norm_phi0, omega, E0; eta=0.1)
 ```
 
-### 13.4 Decoupled Finite-Temperature Lanczos Method (FTLM)
+### 13.4 Finite-Temperature Lanczos Method (Dual Workflows: Streamed & Cached)
 
-#### Two-Stage Decoupled Workflow
+#### Dual-Workflow Philosophy
+1. **Streamed Mode (`ftlm_sweep_streamed`)**: Memory-bounded two-pass execution ($\mathcal{O}(M^2 N_{\text{obs}})$ RAM, ~16 MB). Recommended for production runs on massive Hilbert spaces. Pass 1 finds global shift $E_{\min}$ and caches recurrence coefficients; Pass 2 reconstructs basis vectors, projects observables, accumulates directly into `beta_grid` accumulators, and immediately frees memory.
+2. **Cached Mode (`ftlm_sample` + `ftlm_evaluate_sweep`)**: Decoupled two-stage execution preserving samples in `FTLMSamples{T}` for instant zero-SpMV evaluation across arbitrary temperature grids.
+
 ```julia
-# Stage 1: Generate Krylov subspace samples & project observables (heavy SpMV)
+# Mode 1: Streamed Two-Pass Sweep (Minimal RAM footprint)
+streamed_sweep = ftlm_sweep_streamed(H; betas=[0.1, 0.5, 1.0, 2.0], observables=[O_corr], n_random=50, n_steps=60)
+println("Dimension: ", streamed_sweep.dimension)
+println("Effective samples R_eff: ", streamed_sweep.effective_samples)
+println("Complex <O>: ", streamed_sweep.observable_expectations[1])
+
+# Mode 2: Cached Stage 1 (Generate Krylov samples & project observables)
 samples = ftlm_sample(H; observables=[O_corr], n_random=50, n_steps=100, seed=42)
 
-# Stage 2: Instant multi-temperature evaluation (zero SpMV operations)
-sweep = ftlm_evaluate_sweep(samples, [0.1, 0.5, 1.0, 2.0, 5.0, 10.0])
-println("Internal energies: ", sweep.internal_energies)
-println("Observable expectations: ", sweep.observable_expectations[1])
+# Mode 2: Cached Stage 2 (Instant multi-temperature evaluation, zero SpMV operations)
+cached_sweep = ftlm_evaluate_sweep(samples, [0.1, 0.5, 1.0, 2.0, 5.0, 10.0])
+println("Internal energies: ", cached_sweep.internal_energies)
+println("Observable expectations: ", cached_sweep.observable_expectations[1])
 
 # SciML interface extension: solve with pre-computed samples
 prob = ThermalProblem(H; betas=[0.2, 1.0, 4.0], observables=[O_corr])
 sweep_sciml = solve(prob, samples)
-```
 
-#### Convenience Single-Call Wrappers
-```julia
-# Single temperature point
+# Single temperature point evaluation
 thermal = ftlm(H; beta=2.0, n_random=50, n_steps=100)
 println("Z = $(thermal.partition_function), E = $(thermal.internal_energy), Cv = $(thermal.specific_heat)")
-
-# End-to-end multi-temperature sweep with observables
-sweep = ftlm_sweep(H; beta_grid=[0.1, 1.0, 5.0, 10.0], observables=[O_corr], n_random=50, n_steps=60)
-println("Sweep <O>: ", sweep.observable_expectations[1])
-println("Sweep error: ", sweep.observable_errors[1])
 ```
 
-### 13.5 Correction Vector Method
+---
+
+### 13.5 Pure-State Real-Time Dynamics (`time_evolve`)
+
+Propagates an arbitrary initial pure state vector under unitary Schrödinger evolution $|\psi(t)\rangle = e^{-i \hat{H} t} |\psi(0)\rangle$:
+
+```julia
+# Propagate initial state across a time grid
+times = [0.0, 0.5 * Float64(pi), Float64(pi), 2.0 * Float64(pi)]
+rt_res = time_evolve(H, psi0; times=times, observables=[H, Sz0], n_steps=30)
+
+println("Survival probabilities: ", rt_res.survival_probabilities)
+println("Observable <H>(t): ", real.(rt_res.observable_expectations[1]))
+println("Observable <Sz0>(t): ", real.(rt_res.observable_expectations[2]))
+```
+
+- Supports both `times` and `time_grid` keyword arguments.
+- Returns [`RealTimeResult{T}`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/julia/src/solvers.jl): `time_grid`, `survival_probabilities::Vector{Complex{T}}`, and `observable_expectations::Vector{Vector{Complex{T}}}`.
+
+---
+
+### 13.6 Finite-Temperature Dynamical Correlators (`ftlm_dynamics`)
+
+Computes unequal-time finite-temperature dynamical correlation functions:
+$$C_{AB}(t; \beta) = \langle \hat{A}(t) \hat{B}(0) \rangle_\beta = \frac{1}{Z(\beta)} \operatorname{Tr}\left( e^{-\beta \hat{H}} e^{i \hat{H} t} \hat{A} e^{-i \hat{H} t} \hat{B} \right)$$
+using **dual-Krylov propagation**, forming $|\chi_0\rangle = \hat{B} |\phi\rangle$ in the full Hilbert space to eliminate projected operator truncation errors:
+
+```julia
+ft_dyn = ftlm_dynamics(H, Sz0, Sz0; beta=1.0, times=[0.0, 0.2, 0.5, 1.0], n_random=50, n_steps=100, seed=42)
+
+println("Correlations C_zz(t): ", ft_dyn.correlations)
+println("Correlation error bars: ", ft_dyn.correlation_errors)
+```
+
+---
+
+### 13.7 Correction Vector Method
 ```julia
 cv = solver_correction_vector(H, op_psi0; e0=E0, omega=1.5, eta=0.1, maxiter=200, tol=1e-8)
 println("Spectral intensity at omega=1.5: ", cv.spectral_function)

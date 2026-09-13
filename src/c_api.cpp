@@ -1173,6 +1173,50 @@ void qkrylov_ftlm_sweep_result_free(qkrylov_ftlm_sweep_result_c_t* result) {
     qkrylov_ftlm_sweep_result_free_fp64(result);
 }
 
+int qkrylov_ftlm_sweep_streamed(qkrylov_hamiltonian_h h,
+                                const double* beta_grid,
+                                int num_betas,
+                                const qkrylov_hamiltonian_h* observables,
+                                int num_observables,
+                                int n_random,
+                                int n_steps,
+                                uint64_t seed,
+                                qkrylov_ftlm_sweep_result_c_t* result) {
+    return qkrylov_ftlm_sweep_streamed_fp64(h, beta_grid, num_betas, observables, num_observables, n_random, n_steps, seed, result);
+}
+
+int qkrylov_time_evolve(qkrylov_hamiltonian_h h,
+                        const double* psi0_complex,
+                        const double* time_grid,
+                        int num_times,
+                        const qkrylov_hamiltonian_h* observables,
+                        int num_observables,
+                        int n_steps,
+                        qkrylov_real_time_result_c_t* result) {
+    return qkrylov_time_evolve_fp64(h, psi0_complex, time_grid, num_times, observables, num_observables, n_steps, result);
+}
+
+void qkrylov_real_time_result_free(qkrylov_real_time_result_c_t* result) {
+    qkrylov_real_time_result_free_fp64(result);
+}
+
+int qkrylov_ftlm_dynamics(qkrylov_hamiltonian_h h,
+                          double beta,
+                          qkrylov_hamiltonian_h a,
+                          qkrylov_hamiltonian_h b,
+                          const double* time_grid,
+                          int num_times,
+                          int n_random,
+                          int n_steps,
+                          uint64_t seed,
+                          qkrylov_ftlm_dynamics_result_c_t* result) {
+    return qkrylov_ftlm_dynamics_fp64(h, beta, a, b, time_grid, num_times, n_random, n_steps, seed, result);
+}
+
+void qkrylov_ftlm_dynamics_result_free(qkrylov_ftlm_dynamics_result_c_t* result) {
+    qkrylov_ftlm_dynamics_result_free_fp64(result);
+}
+
 int qkrylov_ftlm_sample(qkrylov_hamiltonian_h h,
                         const qkrylov_hamiltonian_h* observables,
                         int num_observables,

@@ -20,8 +20,10 @@
     - [11.1 Compile-Time Policy-Dispatched Lanczos Eigensolver](#111-compile-time-policy-dispatched-lanczos-eigensolver)
     - [11.2 Block Davidson Solver & Diagonal Preconditioning](#112-block-davidson-solver--diagonal-preconditioning)
     - [11.3 Dynamical Continued Fraction Spectroscopy](#113-dynamical-continued-fraction-spectroscopy)
-    - [11.4 Decoupled Finite-Temperature Lanczos Method (FTLM)](#114-decoupled-finite-temperature-lanczos-method-ftlm)
-    - [11.5 Correction Vector Method (Resonance Spectroscopy)](#115-correction-vector-method-resonance-spectroscopy)
+    - [11.4 Finite-Temperature Lanczos Method (FTLM: Dual Workflows)](#114-finite-temperature-lanczos-method-ftlm-dual-workflows)
+    - [11.5 Pure-State Real-Time Dynamics (time_evolve)](#115-pure-state-real-time-dynamics-time_evolve)
+    - [11.6 Finite-Temperature Dynamical Correlators (ftlm_dynamics)](#116-finite-temperature-dynamical-correlators-ftlm_dynamics)
+    - [11.7 Correction Vector Method (Resonance Spectroscopy)](#117-correction-vector-method-resonance-spectroscopy)
 12. [Comprehensive End-to-End C++20 Usage Examples](#12-comprehensive-end-to-end-c20-usage-examples)
 13. [CMake Build System, Compiler Configuration & Best Practices](#13-cmake-build-system-compiler-configuration--best-practices)
 
@@ -482,25 +484,105 @@ $$G(z) = \langle \phi_0 | \frac{1}{z - \hat{H} + E_0} | \phi_0 \rangle, \quad z 
 
 ---
 
-### 11.4 Decoupled Finite-Temperature Lanczos Method (FTLM)
+### 11.4 Finite-Temperature Lanczos Method (FTLM: Dual Workflows)
 
-Defined in [`include/qkrylov/solvers/ftlm.hpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/include/qkrylov/solvers/ftlm.hpp#L13-L89) and implemented in [`src/solvers/ftlm.cpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/src/solvers/ftlm.cpp).
+Defined in [`include/qkrylov/solvers/ftlm.hpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/include/qkrylov/solvers/ftlm.hpp#L13-L120) and implemented in [`src/solvers/ftlm.cpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/src/solvers/ftlm.cpp).
 
-Computes finite-temperature properties over random trial states $\{|r\rangle\}$:
-$$\langle \hat{O} \rangle_\beta = \frac{1}{Z(\beta)} \sum_{r=1}^R \sum_{m=0}^{M-1} e^{-\beta \epsilon_m^{(r)}} |\langle r | \psi_m^{(r)} \rangle|^2 \langle \psi_m^{(r)} | \hat{O} | \psi_m^{(r)} \rangle$$
+Computes finite-temperature thermal averages and thermodynamics over random Gaussian trial states $\{|r\rangle\}$ projected strictly onto the unit sphere $\mathbb{S}^{D-1}$:
+$$\langle \hat{O} \rangle_\beta = \frac{1}{Z(\beta)} \operatorname{Tr}\left(e^{-\beta \hat{H}} \hat{O}\right) = \frac{1}{\bar{Z}(\beta)} \frac{1}{R} \sum_{r=1}^R \mathbf{c}^{(r)\dagger} \mathcal{O}^{(r)} \mathbf{c}^{(r)}$$
+where $\mathbf{c}^\dagger \mathcal{O} \mathbf{c} = \sum_{j,k} c_j^* \mathcal{O}_{jk} c_k \in \mathbb{C}$ is evaluated in its exact sesquilinear form, returning complex expectations for non-Hermitian and complex Hermitian observables ($S^y, S^+, c_k, J$).
 
-#### Two-Stage Decoupled Workflow
-1. **Stage 1 ([`ftlm_sample`](file:///home/pritipriya/Documents/GitHub/qkrylov/include/qkrylov/solvers/ftlm.hpp#L54-L61))**:
-   Performs $R$ random Krylov walks of $M$ steps on device memory. Observables $\hat{O} \neq \hat{H}$ are projected onto the Krylov subspace:
-   $$O_{jk}^{(r)} = \langle v_j^{(r)} | \hat{O} | v_k^{(r)} \rangle$$
-2. **Stage 2 ([`ftlm_evaluate_sweep`](file:///home/pritipriya/Documents/GitHub/qkrylov/include/qkrylov/solvers/ftlm.hpp#L64-L67))**:
-   Takes pre-computed samples and evaluates partition function $Z(\beta)$, internal energy $E(\beta)$, free energy $F(\beta)$, specific heat $C_v(\beta)$, entropy $S(\beta)$, and observable expectations $\langle \hat{O} \rangle_\beta$ across a temperature grid in milliseconds.
-3. **Low-Temperature Overflow Defense**:
-   Ground-state energy shifting $E_{\min} = \min_{r, m} \epsilon_m^{(r)}$ is subtracted from exponent arguments, preventing `inf`/`NaN` at $\beta \gg 1$.
+#### Mathematical & Numerical Innovations:
+1. **Haar Unit-Sphere Trace Scaling**: Gaussian vector lengths $\|r\|^2 \sim \chi^2(2D)$ fluctuations are eliminated by projecting onto $\mathbb{S}^{D-1}$ and scaling averages by the Hilbert space dimension $D/R$:
+   $$Z(\beta) = \frac{D}{R} \sum_{r=1}^R \sum_{m=0}^{M-1} (y_{0m}^{(r)})^2 e^{-\beta(\epsilon_m^{(r)} - E_{\min})}$$
+2. **Dual-Workflow Architecture**:
+   - **Streamed Two-Pass Mode (`ftlm_sweep_streamed` / `FTLMWorkflow::Streamed`)**: Bounded to $\mathcal{O}(M^2 N_{\text{obs}})$ peak RAM (~16 MB). Pass 1 discovers global shift $E_{\min}$ and caches recurrence coefficients; Pass 2 streams projection on-the-fly for the input `beta_grid` and immediately frees operator matrices per sample.
+   - **Cached Mode (`ftlm_sample` + `ftlm_evaluate_sweep` / `FTLMWorkflow::Cached`)**: Preserves Krylov samples and projected matrices in `std::vector<FTLMKrylovSample>` for instant zero-SpMV evaluation across arbitrary temperature grids.
+3. **Linearized Ratio Error Bars**: Replaces unstable sample quotients $A_r / Z_r$ with the linearized covariance-aware standard error:
+   $$\sigma_{\bar{O}} = \frac{1}{\bar{Z}} \sqrt{\frac{1}{R(R - 1)} \sum_{r=1}^R \left| A_r - \bar{O} Z_r \right|^2}$$
+4. **Effective Sample Diagnostic ($R_{\text{eff}}$)**: Detects low-$T$ single-sample freeze-out:
+   $$R_{\text{eff}}(\beta) = \frac{\left(\sum_{r=1}^R Z_r(\beta)\right)^2}{\sum_{r=1}^R Z_r(\beta)^2}$$
+5. **Thermodynamically Consistent Entropy**: Evaluated via thermodynamic integration anchored at $\lim_{\beta \to 0} S = \ln D$:
+   $$S(\beta) = \ln D - \int_0^\beta \beta' C_v(\beta') d\beta' \quad (\text{when } \beta_{\min} \le 10^{-4})$$
+   and falls back to state function $S(\beta) = \max(0, \beta(\langle E \rangle - F))$ when sweeping an unanchored finite-temperature window ($\beta_{\min} > 10^{-4}$).
+
+```cpp
+// Mode 1: Streamed Two-Pass (Production, O(M^2 * N_obs) RAM)
+auto sweep = ftlm_sweep(H, beta_grid, {SzSz}, n_random, n_steps, seed, FTLMWorkflow::Streamed);
+
+// Mode 2: Cached Stage 1 (Sampling) + Stage 2 (Instant Re-evaluation)
+auto samples = ftlm_sample(H, {SzSz}, n_random, n_steps, seed);
+auto sweep_eval = ftlm_evaluate_sweep(samples, beta_grid, H.dimension());
+```
 
 ---
 
-### 11.5 Correction Vector Method (Resonance Spectroscopy)
+### 11.5 Pure-State Real-Time Dynamics (`time_evolve`)
+
+Defined in [`include/qkrylov/solvers/dynamics.hpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/include/qkrylov/solvers/dynamics.hpp#L40-L75) and implemented in [`src/solvers/dynamics.cpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/src/solvers/dynamics.cpp).
+
+Propagates an arbitrary initial pure state $|\psi(0)\rangle$ under unitary real-time Schrödinger evolution:
+$$|\psi(t)\rangle = e^{-i \hat{H} t} |\psi(0)\rangle$$
+
+```cpp
+struct RealTimeResult {
+    std::vector<Real> time_grid;
+    std::vector<Complex> survival_probabilities;             // L(t) = <psi(0)|psi(t)>
+    std::vector<std::vector<Complex>> observable_expectations; // [obs_idx][time_idx]
+};
+
+template <typename ExecSpace>
+RealTimeResult time_evolve(
+    const MatrixFreeHamiltonian<ExecSpace>& H,
+    const HostVector& psi0,
+    const std::vector<Real>& time_grid,
+    const std::vector<MatrixFreeHamiltonian<ExecSpace>>& observables = {},
+    int n_steps = 30
+);
+```
+
+- **Short-to-Medium Times ($t \lesssim M / \|H\|$):** One Krylov run evaluates an arbitrary dense time grid $t_1, \dots, t_K$ in milliseconds via scalar matrix contractions.
+- **Long Times ($t \gg 1$):** Adaptive Krylov time-stepping updates $|\psi(t + \Delta t)\rangle \approx \exp(-i \hat{H} \Delta t) |\psi(t)\rangle$ with exact norm conservation.
+
+---
+
+### 11.6 Finite-Temperature Real-Time Dynamics (`ftlm_dynamics`)
+
+Defined in [`include/qkrylov/solvers/dynamics.hpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/include/qkrylov/solvers/dynamics.hpp#L77-L120) and implemented in [`src/solvers/dynamics.cpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/src/solvers/dynamics.cpp).
+
+Computes unequal-time finite-temperature dynamical correlation functions:
+$$C_{AB}(t; \beta) = \langle \hat{A}(t) \hat{B}(0) \rangle_\beta = \frac{1}{Z(\beta)} \operatorname{Tr}\left( e^{-\beta \hat{H}} e^{i \hat{H} t} \hat{A} e^{-i \hat{H} t} \hat{B} \right)$$
+
+Uses **dual-Krylov propagation**:
+1. Prepares thermal state $|\phi_r(\beta/2)\rangle = e^{-\beta \hat{H}/2} |r\rangle$ in $\mathcal{K}(H, |r\rangle)$.
+2. Forms the branching state $|\chi_r(\beta/2)\rangle = \hat{B} |\phi_r(\beta/2)\rangle$ directly in the **full $D$-dimensional Hilbert space**.
+3. Launches a second independent Krylov propagation for $|\chi_r\rangle$ in $\mathcal{K}(H, |\chi_r\rangle)$. This completely eliminates operator projection truncation errors and makes $C_{AB}(0) = \langle \hat{A} \hat{B} \rangle$ exact to machine precision.
+4. Performs linearized ratio averaging over $R$ samples to yield $C_{AB}(t; \beta)$ and its statistical error bars $\sigma_{C}(t)$.
+
+```cpp
+struct FTLMDynamicsResult {
+    Real beta;
+    std::vector<Real> time_grid;
+    std::vector<Complex> correlations;    // C_AB(t) = <A(t) B(0)>_beta
+    std::vector<Real> correlation_errors; // Linearized ratio error bars
+};
+
+template <typename ExecSpace>
+FTLMDynamicsResult ftlm_dynamics(
+    const MatrixFreeHamiltonian<ExecSpace>& H,
+    Real beta,
+    const MatrixFreeHamiltonian<ExecSpace>& A,
+    const MatrixFreeHamiltonian<ExecSpace>& B,
+    const std::vector<Real>& time_grid,
+    int n_random = 50,
+    int n_steps = 100,
+    uint64_t seed = 42
+);
+```
+
+---
+
+### 11.7 Correction Vector Method (Resonance Spectroscopy)
 
 Defined in [`include/qkrylov/solvers/correction_vector.hpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/include/qkrylov/solvers/correction_vector.hpp#L10-L27) and implemented in [`src/solvers/correction_vector.cpp`](file:///home/pritipriya/Documents/GitHub/qkrylov/src/solvers/correction_vector.cpp).
 

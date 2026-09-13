@@ -306,14 +306,16 @@ def evaluate_spectral_function(
 class FTLMResult:
     """Result of a Finite-Temperature Lanczos Method calculation."""
     def __init__(self, cpp_res):
-        self.beta = getattr(cpp_res, "beta", 0.0)
-        self.partition_function = getattr(cpp_res, "partition_function", 0.0)
-        self.free_energy = getattr(cpp_res, "free_energy", 0.0)
-        self.internal_energy = getattr(cpp_res, "internal_energy", 0.0)
-        self.specific_heat = getattr(cpp_res, "specific_heat", 0.0)
-        self.entropy = getattr(cpp_res, "entropy", 0.0)
-        self.observable_expectations = getattr(cpp_res, "observable_expectations", [])
-        self.observable_errors = getattr(cpp_res, "observable_errors", [])
+        self.dimension = int(getattr(cpp_res, "dimension", 0))
+        self.beta = float(getattr(cpp_res, "beta", 0.0))
+        self.partition_function = float(getattr(cpp_res, "partition_function", 0.0))
+        self.free_energy = float(getattr(cpp_res, "free_energy", 0.0))
+        self.internal_energy = float(getattr(cpp_res, "internal_energy", 0.0))
+        self.specific_heat = float(getattr(cpp_res, "specific_heat", 0.0))
+        self.entropy = float(getattr(cpp_res, "entropy", 0.0))
+        self.effective_samples = float(getattr(cpp_res, "effective_samples", 0.0))
+        self.observable_expectations = [complex(x) for x in getattr(cpp_res, "observable_expectations", [])]
+        self.observable_errors = [float(x) for x in getattr(cpp_res, "observable_errors", [])]
 
     def __iter__(self):
         return iter((self.beta, self.partition_function, self.internal_energy, self.specific_heat))
@@ -334,13 +336,15 @@ class FTLMResult:
 class FTLMSweepResult:
     """Result of an FTLM multi-temperature sweep with observables."""
     def __init__(self, cpp_res):
+        self.dimension = int(getattr(cpp_res, "dimension", 0))
         self.beta_grid = np.array(cpp_res.beta_grid, dtype=float)
         self.partition_functions = np.array(cpp_res.partition_functions, dtype=float)
         self.free_energies = np.array(cpp_res.free_energies, dtype=float)
         self.internal_energies = np.array(cpp_res.internal_energies, dtype=float)
         self.specific_heats = np.array(cpp_res.specific_heats, dtype=float)
         self.entropies = np.array(cpp_res.entropies, dtype=float)
-        self.observable_expectations = [np.array(x, dtype=float) for x in cpp_res.observable_expectations]
+        self.effective_samples = np.array(cpp_res.effective_samples, dtype=float)
+        self.observable_expectations = [np.array(x, dtype=complex) for x in cpp_res.observable_expectations]
         self.observable_errors = [np.array(x, dtype=float) for x in cpp_res.observable_errors]
 
     def __repr__(self) -> str:
@@ -392,25 +396,44 @@ class FTLM(Solver):
         Number of Lanczos expansion steps per sample (default 100).
     seed : int, optional
         Deterministic random seed (default 42).
+    mode : str, optional
+        Workflow mode: 'streamed' (memory-bounded two-pass on-the-fly accumulation)
+        or 'cached' (stores Krylov samples for post-hoc zero-SpMV beta tuning).
+        Default is 'streamed'.
     """
 
-    def __init__(self, beta: float = 1.0, n_random: int = 50, n_steps: int = 100, seed: int = 42):
+    def __init__(
+        self,
+        beta: float = 1.0,
+        n_random: int = 50,
+        n_steps: int = 100,
+        seed: int = 42,
+        mode: str = "streamed"
+    ):
         self.beta = float(beta)
         self.n_random = int(n_random)
         self.n_steps = int(n_steps)
         self.seed = int(seed)
+        self.mode = mode.lower()
+        if self.mode not in ("streamed", "cached"):
+            raise ValueError(f"Unknown FTLM mode '{mode}', expected 'streamed' or 'cached'")
 
     def solve(
         self,
         H: MatrixFreeHamiltonian,
         betas: Optional[Sequence[float]] = None,
-        observables: Optional[Sequence[MatrixFreeHamiltonian]] = None
+        observables: Optional[Sequence[MatrixFreeHamiltonian]] = None,
+        mode: Optional[str] = None
     ) -> Union[FTLMResult, FTLMSweepResult]:
         s_dtype = "_FP64" if getattr(H, "dtype", np.float32) == np.float64 else "_FP32"
+        workflow_mode = (mode or self.mode).lower()
         if betas is not None or observables:
-            fn = getattr(_cpp, f"ftlm_sweep_{H._backend_suffix}{s_dtype}")
             b_list = [float(b) for b in betas] if betas is not None else [self.beta]
             obs_cpp = [obs._cpp_obj for obs in (observables or [])]
+            if workflow_mode == "cached":
+                fn = getattr(_cpp, f"ftlm_sweep_{H._backend_suffix}{s_dtype}")
+            else:
+                fn = getattr(_cpp, f"ftlm_sweep_streamed_{H._backend_suffix}{s_dtype}")
             res = fn(H._cpp_obj, b_list, obs_cpp, self.n_random, self.n_steps, self.seed)
             return FTLMSweepResult(res)
         else:
@@ -446,10 +469,25 @@ def ftlm(
     n_steps: int = 100,
     betas: Optional[Sequence[float]] = None,
     observables: Optional[Sequence[MatrixFreeHamiltonian]] = None,
-    seed: int = 42
+    seed: int = 42,
+    mode: str = "streamed"
 ) -> Union[FTLMResult, FTLMSweepResult]:
     """Compute finite-temperature thermodynamic observables using FTLM."""
-    return FTLM(beta=beta, n_random=n_random, n_steps=n_steps, seed=seed).solve(
+    return FTLM(beta=beta, n_random=n_random, n_steps=n_steps, seed=seed, mode=mode).solve(
+        H, betas=betas, observables=observables
+    )
+
+
+def ftlm_sweep_streamed(
+    H: MatrixFreeHamiltonian,
+    betas: Sequence[float],
+    observables: Optional[Sequence[MatrixFreeHamiltonian]] = None,
+    n_random: int = 50,
+    n_steps: int = 100,
+    seed: int = 42
+) -> FTLMSweepResult:
+    """Memory-bounded two-pass streamed FTLM sweep."""
+    return FTLM(n_random=n_random, n_steps=n_steps, seed=seed, mode="streamed").solve(
         H, betas=betas, observables=observables
     )
 
@@ -471,6 +509,107 @@ def ftlm_evaluate_sweep(
 ) -> FTLMSweepResult:
     """Stage 2: Evaluate thermodynamic sweep on temperature grid betas with zero SpMV cost."""
     return samples.evaluate_sweep(betas)
+
+
+class RealTimeResult:
+    """Result of real-time pure state quantum evolution."""
+    def __init__(self, cpp_res):
+        self.time_grid = np.array(cpp_res.time_grid, dtype=float)
+        self.survival_probabilities = np.array(cpp_res.survival_probabilities, dtype=complex)
+        self.observable_expectations = [np.array(x, dtype=complex) for x in cpp_res.observable_expectations]
+
+    def __repr__(self) -> str:
+        return f"RealTimeResult(num_times={len(self.time_grid)}, num_observables={len(self.observable_expectations)})"
+
+
+class TimeEvolve(Solver):
+    """Pure-state real-time quantum evolution solver: |psi(t)> = exp(-i*H*t) |psi(0)>."""
+    def __init__(self, time_grid: Sequence[float], n_steps: int = 30):
+        self.time_grid = [float(t) for t in time_grid]
+        self.n_steps = int(n_steps)
+
+    def solve(
+        self,
+        H: MatrixFreeHamiltonian,
+        psi0: np.ndarray,
+        observables: Optional[Sequence[MatrixFreeHamiltonian]] = None
+    ) -> RealTimeResult:
+        s_dtype = "_FP64" if getattr(H, "dtype", np.float32) == np.float64 else "_FP32"
+        vec = np.ascontiguousarray(
+            psi0,
+            dtype=np.complex128 if getattr(H, "dtype", np.float32) == np.float64 else np.complex64
+        )
+        obs_cpp = [obs._cpp_obj for obs in (observables or [])]
+        fn = getattr(_cpp, f"time_evolve_{H._backend_suffix}{s_dtype}")
+        res = fn(H._cpp_obj, vec, self.time_grid, obs_cpp, self.n_steps)
+        return RealTimeResult(res)
+
+
+def time_evolve(
+    H: MatrixFreeHamiltonian,
+    psi0: np.ndarray,
+    time_grid: Sequence[float],
+    observables: Optional[Sequence[MatrixFreeHamiltonian]] = None,
+    n_steps: int = 30
+) -> RealTimeResult:
+    """Compute pure-state real-time evolution: |psi(t)> = exp(-i*H*t) |psi(0)>."""
+    return TimeEvolve(time_grid=time_grid, n_steps=n_steps).solve(H, psi0=psi0, observables=observables)
+
+
+class FTLMDynamicsResult:
+    """Result of finite-temperature dynamical correlator calculation: C_AB(t) = <A(t) B(0)>_beta."""
+    def __init__(self, cpp_res):
+        self.beta = float(cpp_res.beta)
+        self.time_grid = np.array(cpp_res.time_grid, dtype=float)
+        self.correlations = np.array(cpp_res.correlations, dtype=complex)
+        self.correlation_errors = np.array(cpp_res.correlation_errors, dtype=float)
+
+    def __repr__(self) -> str:
+        return f"FTLMDynamicsResult(beta={self.beta:.4f}, num_times={len(self.time_grid)})"
+
+
+class FTLMDynamics(Solver):
+    """Finite-temperature real-time dynamical correlator solver."""
+    def __init__(
+        self,
+        beta: float = 1.0,
+        time_grid: Sequence[float] = (0.0,),
+        n_random: int = 50,
+        n_steps: int = 100,
+        seed: int = 42
+    ):
+        self.beta = float(beta)
+        self.time_grid = [float(t) for t in time_grid]
+        self.n_random = int(n_random)
+        self.n_steps = int(n_steps)
+        self.seed = int(seed)
+
+    def solve(
+        self,
+        H: MatrixFreeHamiltonian,
+        A: MatrixFreeHamiltonian,
+        B: MatrixFreeHamiltonian
+    ) -> FTLMDynamicsResult:
+        s_dtype = "_FP64" if getattr(H, "dtype", np.float32) == np.float64 else "_FP32"
+        fn = getattr(_cpp, f"ftlm_dynamics_{H._backend_suffix}{s_dtype}")
+        res = fn(H._cpp_obj, self.beta, A._cpp_obj, B._cpp_obj, self.time_grid, self.n_random, self.n_steps, self.seed)
+        return FTLMDynamicsResult(res)
+
+
+def ftlm_dynamics(
+    H: MatrixFreeHamiltonian,
+    A: MatrixFreeHamiltonian,
+    B: MatrixFreeHamiltonian,
+    beta: float = 1.0,
+    time_grid: Sequence[float] = (0.0,),
+    n_random: int = 50,
+    n_steps: int = 100,
+    seed: int = 42
+) -> FTLMDynamicsResult:
+    """Compute finite-temperature dynamical correlator C_AB(t) = <A(t) B(0)>_beta."""
+    return FTLMDynamics(
+        beta=beta, time_grid=time_grid, n_random=n_random, n_steps=n_steps, seed=seed
+    ).solve(H, A, B)
 
 
 

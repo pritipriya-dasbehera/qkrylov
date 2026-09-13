@@ -78,6 +78,9 @@ int main() {
     assert(sweep.observable_expectations.size() == 2);
     assert(sweep.observable_errors.size() == 2);
 
+    assert(sweep.dimension == 4);
+    assert(sweep.effective_samples.size() == beta_grid.size());
+
     for (size_t bi = 0; bi < beta_grid.size(); ++bi) {
         Real beta = beta_grid[bi];
         Real Z = sweep.partition_functions[bi];
@@ -85,8 +88,9 @@ int main() {
         Real F = sweep.free_energies[bi];
         Real Cv = sweep.specific_heats[bi];
         Real S = sweep.entropies[bi];
-        Real exp_H = sweep.observable_expectations[0][bi];
-        Real exp_SzSz = sweep.observable_expectations[1][bi];
+        Real Reff = sweep.effective_samples[bi];
+        Real exp_H = sweep.observable_expectations[0][bi].real();
+        Real exp_SzSz = sweep.observable_expectations[1][bi].real();
         Real err_SzSz = sweep.observable_errors[1][bi];
 
         std::cout << "beta=" << beta
@@ -95,6 +99,7 @@ int main() {
                   << " | F=" << F
                   << " | Cv=" << Cv
                   << " | S=" << S
+                  << " | Reff=" << Reff
                   << " | <O_H>=" << exp_H
                   << " | <SzSz>=" << exp_SzSz << " +/- " << err_SzSz
                   << "\n";
@@ -106,6 +111,11 @@ int main() {
         assert(!std::isnan(S));
         assert(Cv >= Real(0.0)); // Heat capacity must be non-negative
         assert(S >= Real(0.0));  // Entropy must be non-negative
+        assert(Reff > 0.0 && Reff <= static_cast<Real>(n_random) + 1e-3);
+
+        // Imaginary parts should vanish for Hermitian observables
+        assert(std::abs(sweep.observable_expectations[0][bi].imag()) < 1e-4);
+        assert(std::abs(sweep.observable_expectations[1][bi].imag()) < 1e-4);
 
         // Observable <O_H> must match <H> to high precision
         assert(std::abs(exp_H - E) < 1e-4);
@@ -116,9 +126,10 @@ int main() {
             assert(std::abs(exp_SzSz - (-0.25)) < 0.05);
         }
 
-        // High-temperature limit checks at small beta (<SzSz> -> 0)
+        // High-temperature limit checks at small beta (<SzSz> -> 0, S -> ln(4) = 1.386)
         if (beta <= 0.1) {
             assert(std::abs(exp_SzSz) < 0.05);
+            assert(std::abs(S - std::log(Real(4.0))) < 0.2);
         }
     }
 
@@ -131,6 +142,17 @@ int main() {
     auto sweep_direct = ftlm_sweep<Kokkos::DefaultExecutionSpace>(H, {1.0, 2.0}, observables, 20, 10, seed);
     assert(sweep_direct.partition_functions.size() == 2);
     assert(sweep_direct.observable_expectations.size() == 2);
+
+    // 8. Test Streamed Workflow (ftlm_sweep_streamed)
+    std::cout << "Testing Streamed Workflow (ftlm_sweep_streamed)...\n";
+    auto sweep_streamed = ftlm_sweep_streamed<Kokkos::DefaultExecutionSpace>(H, beta_grid, observables, n_random, n_steps, seed);
+    assert(sweep_streamed.partition_functions.size() == beta_grid.size());
+    assert(sweep_streamed.observable_expectations.size() == 2);
+    for (size_t bi = 0; bi < beta_grid.size(); ++bi) {
+        assert(std::abs(sweep_streamed.internal_energies[bi] - sweep.internal_energies[bi]) < 1e-4);
+        assert(std::abs(sweep_streamed.observable_expectations[0][bi].real() - sweep.observable_expectations[0][bi].real()) < 1e-4);
+        assert(std::abs(sweep_streamed.observable_expectations[1][bi].real() - sweep.observable_expectations[1][bi].real()) < 1e-4);
+    }
 
     std::cout << "All FTLM sweep and observable tests PASSED successfully!\n";
     return 0;

@@ -37,8 +37,9 @@ This document provides a comprehensive, technically rigorous architectural refer
    - [Abstract Solver Interface `Solver`](#abstract-solver-interface-solver)
    - [Lanczos Ground State (`Lanczos` & `LanczosTwoPass`)](#lanczos-ground-state-lanczos--lanczostwopass)
    - [Davidson Subspace Eigensolver (`Davidson`)](#davidson-subspace-eigensolver-davidson)
-   - [Continued Fraction Dynamics (`ContinuedFraction`)](#continued-fraction-dynamics-continuedfraction)
    - [Finite Temperature Lanczos Method (`FTLM`)](#finite-temperature-lanczos-method-ftlm)
+   - [Pure-State Real-Time Dynamics (`TimeEvolve`)](#pure-state-real-time-dynamics-timeevolve)
+   - [Finite-Temperature Dynamical Correlators (`FTLMDynamics`)](#finite-temperature-dynamical-correlators-ftlmdynamics)
    - [Correction Vector Solver (`CorrectionVector`)](#correction-vector-solver-correctionvector)
    - [Result Containers & Protocol Unpacking](#result-containers--protocol-unpacking)
 7. [Comprehensive End-to-End Examples](#7-comprehensive-end-to-end-examples)
@@ -463,44 +464,77 @@ Hence, an instantiated solver can be invoked either as `solver.solve(H)` or as a
 
 ### Finite Temperature Lanczos Method (`FTLM`)
 
-[`qkrylov.solvers.FTLM(beta=1.0, n_random=50, n_steps=100, seed=42)`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L353-L391):
-* Uses stochastic trace estimation with random Gaussian states $|r\rangle$:
-  $$\text{Tr}\left(e^{-\beta H} \hat{O}\right) \approx \frac{D}{R} \sum_{r=1}^R \sum_{j=1}^M e^{-\beta \epsilon_j^{(r)}} \langle r | \psi_j^{(r)} \rangle \langle \psi_j^{(r)} | \hat{O} | r \rangle$$
+[`qkrylov.solvers.FTLM(mode="streamed", beta=1.0, n_random=50, n_steps=100, seed=42)`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py):
+* Uses stochastic trace estimation on the unit sphere $\mathbb{S}^{D-1}$ scaled by $D/R$:
+  $$\langle \hat{O} \rangle_\beta = \frac{1}{\bar{Z}(\beta)} \frac{1}{R} \sum_{r=1}^R \sum_{j,k} c_j^{(r)*} \mathcal{O}_{jk}^{(r)} c_k^{(r)} \in \mathbb{C}$$
+* Contraction is evaluated as an exact sesquilinear form $c^\dagger \mathcal{O} c$, returning complex expectation values (`np.complex128` or `np.complex64`) for non-Hermitian and complex Hermitian observables.
+* Standard errors use covariance-aware linearized ratio variance $\sigma_{\bar{O}}$.
 
-#### Decoupled 2-Stage Workflow & `FTLMSamples`
-The decoupled workflow separates computationally heavy Krylov matrix-vector products (SpMV) from rapid multi-temperature evaluations:
-
-1. **Stage 1 (Subspace Sampling & Observable Projection)**:
-   Performs $R$ random walks of $M$ steps on $H$ and projects all observables $\hat{O}$ into the Krylov subspace. Returns an opaque [`FTLMSamples`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L354) container:
+#### Dual Workflows: Streamed vs Cached
+1. **Mode 1: Streamed Two-Pass (`mode="streamed"`) [Default]**:
+   - Memory-bounded $\mathcal{O}(M^2 N_{\text{obs}})$ footprint (~16 MB).
+   - Pass 1 discovers the global minimum shift $E_{\min}$ and caches recurrence coefficients; Pass 2 accumulates on-the-fly for the input `betas` and immediately releases memory.
    ```python
-   # OOP API
-   samples = solver.sample(H, observables=[H])
-   # Functional API
-   samples = qk.ftlm_sample(H, observables=[H], n_random=50, n_steps=100, seed=42)
-
-   print(len(samples))           # Number of random samples R
-   print(samples.num_samples)    # Alias property
+   solver = qk.solvers.FTLM(mode="streamed", n_random=50, n_steps=60)
+   sweep = solver.solve(H, betas=[0.1, 0.5, 1.0, 2.0], observables=[O_corr])
+   print("Dimension:", sweep.dimension)
+   print("Effective samples R_eff:", sweep.effective_samples)
+   print("Complex <O>:", sweep.observable_expectations[0])
    ```
 
-2. **Stage 2 (Fast Boltzmann Temperature Evaluation)**:
-   Evaluates partition functions, thermodynamic equations of state, and physical observable expectation values on an arbitrary temperature grid with **zero additional SpMV products**:
+2. **Mode 2: Cached Decoupled (`mode="cached"`)**:
+   - Stage 1 performs $R$ Krylov walks and stores projected operator matrices in an [`FTLMSamples`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py) handle.
+   - Stage 2 evaluates thermodynamic properties on arbitrary temperature grids with **zero additional SpMV operations**.
    ```python
-   # Via samples object
+   # Stage 1: Sampling
+   samples = qk.ftlm_sample(H, observables=[O_corr], n_random=50, n_steps=100, seed=42)
+
+   # Stage 2: Instant re-evaluation
    sweep1 = samples.evaluate_sweep([0.1, 0.5, 1.0, 2.0, 5.0])
-
-   # Via solver object
-   sweep1 = solver.evaluate_sweep(samples, betas=[0.1, 0.5, 1.0, 2.0, 5.0])
-
-   # Via functional API
-   sweep1 = qk.ftlm_evaluate_sweep(samples, betas=[0.1, 0.5, 1.0, 2.0, 5.0])
-
-   # Zero-cost re-evaluation on a fine grid
    dense_sweep = samples.evaluate_sweep(np.linspace(0.01, 10.0, 200))
    ```
 
-#### Single-Call Convenience APIs
-* **Multi-temperature sweep**: `solver.solve(H, betas=[...], observables=[...])` or [`qkrylov.ftlm(H, betas=[...], observables=[...])`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L393-L405). Returns [`FTLMSweepResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L334-L351).
-* **Single temperature point**: `solver.solve(H)` or `qkrylov.ftlm(H, beta=1.0)`. Returns [`FTLMResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L306-L333).
+---
+
+### Pure-State Real-Time Dynamics (`TimeEvolve`)
+
+[`qkrylov.solvers.TimeEvolve(n_steps=30)`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py):
+* Propagates an arbitrary initial pure state under unitary time evolution:
+  $$|\psi(t)\rangle = e^{-i \hat{H} t} |\psi(0)\rangle$$
+* Computes survival probabilities $\mathcal{L}(t) = |\langle \psi(0) | \psi(t) \rangle|^2$ and time-dependent observable expectation values $\langle \hat{O} \rangle(t) = \langle \psi(t) | \hat{O} | \psi(t) \rangle \in \mathbb{C}$.
+
+```python
+# OOP API
+te_solver = qk.solvers.TimeEvolve(n_steps=30)
+rt_res = te_solver.solve(H, psi0=psi0, times=np.linspace(0.0, 10.0, 100), observables=[H, Sz0])
+
+# Functional API
+rt_res = qk.time_evolve(H, psi0, times=np.linspace(0.0, 10.0, 100), observables=[H, Sz0], n_steps=30)
+
+print("Survival probabilities:", np.abs(rt_res.survival_probabilities)**2)
+print("Observable <H>(t):", rt_res.observable_expectations[0].real)
+```
+
+---
+
+### Finite-Temperature Dynamical Correlators (`FTLMDynamics`)
+
+[`qkrylov.solvers.FTLMDynamics(beta=1.0, n_random=50, n_steps=100, seed=42)`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py):
+* Computes unequal-time finite-temperature dynamical correlation functions:
+  $$C_{AB}(t; \beta) = \langle \hat{A}(t) \hat{B}(0) \rangle_\beta = \frac{1}{Z(\beta)} \operatorname{Tr}\left( e^{-\beta \hat{H}} e^{i \hat{H} t} \hat{A} e^{-i \hat{H} t} \hat{B} \right)$$
+* Employs **dual-Krylov propagation**: builds the branching state $|\chi_0\rangle = \hat{B} |\phi\rangle$ in the full Hilbert space and evolves it in its own Krylov subspace, eliminating projected operator truncation errors and making $C_{AB}(0) = \langle \hat{A} \hat{B} \rangle$ exact to machine precision.
+
+```python
+# OOP API
+ft_dyn_solver = qk.solvers.FTLMDynamics(beta=1.0, n_random=50, n_steps=100, seed=42)
+dyn_res = ft_dyn_solver.solve(H, A=Sz0, B=Sz0, times=np.linspace(0.0, 5.0, 50))
+
+# Functional API
+dyn_res = qk.ftlm_dynamics(H, Sz0, Sz0, beta=1.0, times=np.linspace(0.0, 5.0, 50), n_random=50, n_steps=100, seed=42)
+
+print("Correlations C_zz(t):", dyn_res.correlations)
+print("Correlation error bars:", dyn_res.correlation_errors)
+```
 
 ---
 
@@ -524,8 +558,10 @@ All result objects support Python unpacking protocols (`__iter__`, `__getitem__`
 | [`LanczosResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L8-L35) | `energy: float`, `eigenvector: np.ndarray`, `iterations: int`, `converged: bool` | `e0, psi0 = res` |
 | [`DavidsonResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L171-L196) | `eigenvalues: np.ndarray`, `eigenvectors: List[np.ndarray]` | `evals, evecs = res` |
 | [`DynamicsResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L236-L254) | `alphas: np.ndarray`, `betas: np.ndarray`, `norm_phi0: float` | `alphas, betas, norm0 = res` |
-| [`FTLMResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L306-L333) | `beta`, `partition_function`, `free_energy`, `internal_energy`, `specific_heat`, `entropy`, `observable_expectations` | `beta, Z, E, Cv = res` |
-| [`FTLMSweepResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L334-L351) | `beta_grid`, `partition_functions`, `free_energies`, `internal_energies`, `specific_heats`, `entropies`, `observable_expectations`, `observable_errors` | Accessed via attributes |
+| [`RealTimeResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py) | `time_grid`, `survival_probabilities: np.ndarray` (complex), `observable_expectations: np.ndarray` (complex) | `times, surv, obs = res` |
+| [`FTLMDynamicsResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py) | `beta`, `time_grid`, `correlations: np.ndarray` (complex), `correlation_errors: np.ndarray` | `beta, times, corr, errs = res` |
+| [`FTLMResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L306-L333) | `dimension`, `beta`, `partition_function`, `free_energy`, `internal_energy`, `specific_heat`, `entropy`, `effective_samples`, `observable_expectations`, `observable_errors` | `beta, Z, E, Cv = res` |
+| [`FTLMSweepResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L334-L351) | `dimension`, `beta_grid`, `partition_functions`, `free_energies`, `internal_energies`, `specific_heats`, `entropies`, `effective_samples`, `observable_expectations`, `observable_errors` | Accessed via attributes |
 | [`FTLMSamples`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L354) | `num_samples: int`, `.evaluate_sweep(betas)` | Pre-computed Krylov subspace handle |
 | [`CorrectionVectorResult`](file:///home/pritipriya/Documents/GitHub/qkrylov/bindings/python/qkrylov/solvers.py#L408-L442) | `correction_vector: np.ndarray`, `spectral_function: float`, `iterations: int`, `converged: bool` | `corr_vec, spec, iters, conv = res` |
 

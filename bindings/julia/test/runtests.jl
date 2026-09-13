@@ -316,8 +316,9 @@ using QuantumKrylov
         th_sweep_prob = ThermalProblem(H, [0.5, 1.0]; observables=[H])
         sol_sweep = solve(th_sweep_prob, FTLM(n_random=5, n_steps=20))
         @test sol_sweep isa FTLMSweepResult
+        @test sol_sweep.dimension == 16
         @test length(sol_sweep.beta_grid) == 2
-        @test isapprox(sol_sweep.observable_expectations[1][1], sol_sweep.internal_energies[1], rtol=1e-4)
+        @test isapprox(real(sol_sweep.observable_expectations[1][1]), sol_sweep.internal_energies[1], rtol=1e-4)
 
         # 6. DynamicsProblem with ContinuedFraction
         dyn_prob = DynamicsProblem(H, psi)
@@ -428,14 +429,25 @@ using QuantumKrylov
 
         sweep_res = ftlm_sweep(H; betas=[0.5, 1.0, 2.0], observables=[H], n_random=10, n_steps=20, seed=123)
         @test sweep_res isa FTLMSweepResult
+        @test sweep_res.dimension == 16
         @test length(sweep_res.beta_grid) == 3
         @test all(sweep_res.partition_functions .> 0.0)
         @test all(sweep_res.specific_heats .>= -1e-12)
         @test all(sweep_res.entropies .>= -1e-12)
+        @test length(sweep_res.effective_samples) == 3
+        @test all(sweep_res.effective_samples .> 0.0)
         @test length(sweep_res.observable_expectations) == 1
-        @test isapprox(sweep_res.observable_expectations[1], sweep_res.internal_energies, rtol=1e-4)
+        @test isapprox(real.(sweep_res.observable_expectations[1]), sweep_res.internal_energies, rtol=1e-4)
         @test length(sweep_res.observable_errors) == 1
         @test all(sweep_res.observable_errors[1] .>= 0.0)
+
+        # Streamed FTLM sweep testing
+        streamed_res = ftlm_sweep_streamed(H; betas=[0.5, 1.0, 2.0], observables=[H], n_random=10, n_steps=20, seed=123)
+        @test streamed_res isa FTLMSweepResult{Float64}
+        @test streamed_res.dimension == 16
+        @test isapprox(streamed_res.partition_functions, sweep_res.partition_functions, rtol=1e-10)
+        @test isapprox(streamed_res.internal_energies, sweep_res.internal_energies, rtol=1e-10)
+        @test isapprox(streamed_res.observable_expectations[1], sweep_res.observable_expectations[1], rtol=1e-10)
 
         # Decoupled FTLM testing (Float64)
         samples = ftlm_sample(H; observables=[H], n_random=10, n_steps=20, seed=123)
@@ -466,6 +478,62 @@ using QuantumKrylov
         decoupled_res32 = ftlm_evaluate_sweep(samples32, [0.5, 1.0, 2.0])
         @test decoupled_res32 isa FTLMSweepResult{Float32}
         @test length(decoupled_res32.beta_grid) == 3
+
+        # Streamed FTLM sweep (Float32)
+        streamed_res32 = ftlm_sweep_streamed(H32; betas=[0.5, 1.0, 2.0], observables=[H32], n_random=10, n_steps=20, seed=123)
+        @test streamed_res32 isa FTLMSweepResult{Float32}
+        @test isapprox(streamed_res32.partition_functions, decoupled_res32.partition_functions, rtol=1e-6)
+    end
+
+    @testset "Real-Time Dynamics & Finite-Temperature Correlators" begin
+        # 2-site Heisenberg model: H = Sz0*Sz1 + 0.5*(Sp0*Sm1 + Sm0*Sp1)
+        b2 = SpinHalfBasis(2)
+        s2 = SpinHalfSite()
+        op_h = OpSum()
+        op_h += 1.0 * Sz(0) * Sz(1) + 0.5 * (Sp(0) * Sm(1) + Sm(0) * Sp(1))
+        H2 = MatrixFreeHamiltonian(b2, s2, op_h)
+
+        # Initial state |01> has index 2 (1-based)
+        psi0 = zeros(ComplexF64, 4)
+        psi0[2] = 1.0
+
+        times = [0.0, Float64(pi), 2.0 * Float64(pi)]
+        rt_res = time_evolve(H2, psi0; times=times, observables=[H2], n_steps=10)
+        @test rt_res isa RealTimeResult{Float64}
+        @test length(rt_res.time_grid) == 3
+        # Survival probability |<psi(0)|psi(t)>|^2 = cos^2(t/2)
+        @test isapprox(abs(rt_res.survival_probabilities[1]), 1.0, atol=1e-5)
+        @test isapprox(abs(rt_res.survival_probabilities[2]), 0.0, atol=1e-5)
+        @test isapprox(abs(rt_res.survival_probabilities[3]), 1.0, atol=1e-5)
+        @test isapprox(real(rt_res.observable_expectations[1][1]), -0.25, atol=1e-5)
+        @test isapprox(real(rt_res.observable_expectations[1][2]), -0.25, atol=1e-5)
+
+        # Float32 time_evolve
+        H2_32 = MatrixFreeHamiltonian{Float32}(b2, s2, op_h)
+        psi0_32 = zeros(ComplexF32, 4)
+        psi0_32[2] = 1.0f0
+        times_32 = Float32[0.0f0, Float32(pi), 2.0f0 * Float32(pi)]
+        rt_res_32 = time_evolve(H2_32, psi0_32; times=times_32, observables=[H2_32], n_steps=10)
+        @test rt_res_32 isa RealTimeResult{Float32}
+        @test isapprox(abs(rt_res_32.survival_probabilities[1]), 1.0f0, atol=1e-4)
+
+        # FTLM Dynamics: C_AB(t) = <A(t) B(0)>_beta
+        op_sz0 = OpSum()
+        op_sz0 += 1.0 * Sz(0)
+        Sz0 = MatrixFreeHamiltonian(b2, s2, op_sz0)
+
+        # C_zz(0) = <Sz0(0) Sz0(0)> = <Sz0^2> = 0.25
+        ftlm_dyn = ftlm_dynamics(H2, Sz0, Sz0; beta=0.1, times=[0.0, 0.5, 1.0], n_random=20, n_steps=10, seed=42)
+        @test ftlm_dyn isa FTLMDynamicsResult{Float64}
+        @test length(ftlm_dyn.time_grid) == 3
+        @test isapprox(real(ftlm_dyn.correlations[1]), 0.25, atol=1e-4)
+        @test isapprox(imag(ftlm_dyn.correlations[1]), 0.0, atol=1e-4)
+
+        # Float32 ftlm_dynamics
+        Sz0_32 = MatrixFreeHamiltonian{Float32}(b2, s2, op_sz0)
+        ftlm_dyn_32 = ftlm_dynamics(H2_32, Sz0_32, Sz0_32; beta=0.1f0, times=Float32[0.0f0, 0.5f0], n_random=20, n_steps=10, seed=42)
+        @test ftlm_dyn_32 isa FTLMDynamicsResult{Float32}
+        @test isapprox(real(ftlm_dyn_32.correlations[1]), 0.25f0, atol=1e-4)
     end
 
     @testset "Device & Hardware Query API" begin

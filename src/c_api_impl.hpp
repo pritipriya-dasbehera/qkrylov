@@ -44,6 +44,8 @@ using Scalar = double;
 using LanczosResT = qkrylov_lanczos_result_fp64_t;
 using FTLMResT = qkrylov_ftlm_result_fp64_t;
 using FTLMSweepResT = qkrylov_ftlm_sweep_result_fp64_t;
+using RealTimeResT = qkrylov_real_time_result_fp64_t;
+using FTLMDynamicsResT = qkrylov_ftlm_dynamics_result_fp64_t;
 using CorrVecResT = qkrylov_correction_vector_result_fp64_t;
 #else
 #define SUFFIX(name) name##_fp32
@@ -52,6 +54,8 @@ using Scalar = float;
 using LanczosResT = qkrylov_lanczos_result_fp32_t;
 using FTLMResT = qkrylov_ftlm_result_fp32_t;
 using FTLMSweepResT = qkrylov_ftlm_sweep_result_fp32_t;
+using RealTimeResT = qkrylov_real_time_result_fp32_t;
+using FTLMDynamicsResT = qkrylov_ftlm_dynamics_result_fp32_t;
 using CorrVecResT = qkrylov_correction_vector_result_fp32_t;
 #endif
 
@@ -889,6 +893,7 @@ int SUFFIX(qkrylov_ftlm)(
 static void copy_ftlm_sweep_result(const FTLMSweepResult& sweep, int num_betas, int num_observables, FTLMSweepResT* result) {
     result->num_betas = num_betas;
     result->num_observables = num_observables;
+    result->dimension = static_cast<int64_t>(sweep.dimension);
 
     auto* out_betas = new Scalar[num_betas];
     auto* out_z = new Scalar[num_betas];
@@ -896,6 +901,7 @@ static void copy_ftlm_sweep_result(const FTLMSweepResult& sweep, int num_betas, 
     auto* out_e = new Scalar[num_betas];
     auto* out_cv = new Scalar[num_betas];
     auto* out_s = new Scalar[num_betas];
+    auto* out_eff = new Scalar[num_betas];
     for (int bi = 0; bi < num_betas; ++bi) {
         out_betas[bi] = static_cast<Scalar>(sweep.beta_grid[bi]);
         out_z[bi] = static_cast<Scalar>(sweep.partition_functions[bi]);
@@ -903,6 +909,7 @@ static void copy_ftlm_sweep_result(const FTLMSweepResult& sweep, int num_betas, 
         out_e[bi] = static_cast<Scalar>(sweep.internal_energies[bi]);
         out_cv[bi] = static_cast<Scalar>(sweep.specific_heats[bi]);
         out_s[bi] = static_cast<Scalar>(sweep.entropies[bi]);
+        out_eff[bi] = static_cast<Scalar>(sweep.effective_samples[bi]);
     }
     result->beta_grid = out_betas;
     result->partition_functions = out_z;
@@ -910,19 +917,26 @@ static void copy_ftlm_sweep_result(const FTLMSweepResult& sweep, int num_betas, 
     result->internal_energies = out_e;
     result->specific_heats = out_cv;
     result->entropies = out_s;
+    result->effective_samples = out_eff;
 
     if (num_observables > 0) {
-        auto* out_obs = new Scalar[num_observables * num_betas];
+        auto* out_obs_re = new Scalar[num_observables * num_betas];
+        auto* out_obs_im = new Scalar[num_observables * num_betas];
         auto* out_err = new Scalar[num_observables * num_betas];
         for (int oi = 0; oi < num_observables; ++oi) {
             for (int bi = 0; bi < num_betas; ++bi) {
-                out_obs[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_expectations[oi][bi]);
+                out_obs_re[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_expectations[oi][bi].real());
+                out_obs_im[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_expectations[oi][bi].imag());
                 out_err[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_errors[oi][bi]);
             }
         }
-        result->observable_expectations = out_obs;
+        result->observable_expectations_re = out_obs_re;
+        result->observable_expectations_im = out_obs_im;
+        result->observable_expectations = out_obs_re;
         result->observable_errors = out_err;
     } else {
+        result->observable_expectations_re = nullptr;
+        result->observable_expectations_im = nullptr;
         result->observable_expectations = nullptr;
         result->observable_errors = nullptr;
     }
@@ -1095,18 +1109,271 @@ void SUFFIX(qkrylov_ftlm_sweep_result_free)(FTLMSweepResT* result) {
     delete[] result->internal_energies;
     delete[] result->specific_heats;
     delete[] result->entropies;
-    delete[] result->observable_expectations;
-    delete[] result->observable_errors;
+    delete[] result->effective_samples;
+    if (result->observable_expectations_re) delete[] result->observable_expectations_re;
+    if (result->observable_expectations_im) delete[] result->observable_expectations_im;
+    if (result->observable_errors) delete[] result->observable_errors;
     result->beta_grid = nullptr;
     result->partition_functions = nullptr;
     result->free_energies = nullptr;
     result->internal_energies = nullptr;
     result->specific_heats = nullptr;
     result->entropies = nullptr;
+    result->effective_samples = nullptr;
     result->observable_expectations = nullptr;
+    result->observable_expectations_re = nullptr;
+    result->observable_expectations_im = nullptr;
     result->observable_errors = nullptr;
     result->num_betas = 0;
     result->num_observables = 0;
+    result->dimension = 0;
+}
+
+int SUFFIX(qkrylov_ftlm_sweep_streamed)(
+    qkrylov_hamiltonian_h h,
+    const Scalar* beta_grid,
+    int num_betas,
+    const qkrylov_hamiltonian_h* observables,
+    int num_observables,
+    int n_random,
+    int n_steps,
+    uint64_t seed,
+    FTLMSweepResT* result)
+{
+    if (!h) {
+        set_last_error("qkrylov_ftlm_sweep_streamed: hamiltonian handle is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (h->precision != PREC_ID) {
+        set_last_error("qkrylov_ftlm_sweep_streamed: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (!h->impl || !beta_grid || num_betas <= 0 || !result) {
+        set_last_error("qkrylov_ftlm_sweep_streamed: null pointer or invalid beta_grid");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (n_random <= 0 || n_steps <= 0) {
+        set_last_error("qkrylov_ftlm_sweep_streamed: n_random and n_steps must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (num_observables > 0 && !observables) {
+        set_last_error("qkrylov_ftlm_sweep_streamed: observables array is null but num_observables > 0");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+
+    try {
+        auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
+        std::vector<Real> betas(num_betas);
+        for (int i = 0; i < num_betas; ++i) betas[i] = static_cast<Real>(beta_grid[i]);
+
+        std::vector<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>> obs_vec;
+        obs_vec.reserve(num_observables);
+        for (int i = 0; i < num_observables; ++i) {
+            if (!observables[i] || observables[i]->precision != PREC_ID || !observables[i]->impl) {
+                set_last_error("qkrylov_ftlm_sweep_streamed: invalid observable handle");
+                return QKRYLOV_ERROR_INVALID_ARG;
+            }
+            obs_vec.push_back(*static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(observables[i]->impl.get()));
+        }
+
+        auto sweep = ftlm_sweep_streamed<Kokkos::DefaultExecutionSpace>(*H, betas, obs_vec, n_random, n_steps, seed);
+
+        copy_ftlm_sweep_result(sweep, num_betas, num_observables, result);
+
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_ftlm_sweep_streamed");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+int SUFFIX(qkrylov_time_evolve)(
+    qkrylov_hamiltonian_h h,
+    const Scalar* psi0_complex,
+    const Scalar* time_grid,
+    int num_times,
+    const qkrylov_hamiltonian_h* observables,
+    int num_observables,
+    int n_steps,
+    RealTimeResT* result)
+{
+    if (!h || !h->impl || !psi0_complex || !time_grid || num_times <= 0 || !result) {
+        set_last_error("qkrylov_time_evolve: invalid null argument");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (h->precision != PREC_ID) {
+        set_last_error("qkrylov_time_evolve: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (n_steps <= 0) {
+        set_last_error("qkrylov_time_evolve: n_steps must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (num_observables > 0 && !observables) {
+        set_last_error("qkrylov_time_evolve: observables is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+
+    try {
+        auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
+        const Index dim = H->dimension();
+
+        HostVector psi0_host(dim);
+        for (Index i = 0; i < dim; ++i) {
+            psi0_host[i] = Complex(psi0_complex[2 * i], psi0_complex[2 * i + 1]);
+        }
+
+        std::vector<Real> t_grid(num_times);
+        for (int i = 0; i < num_times; ++i) t_grid[i] = static_cast<Real>(time_grid[i]);
+
+        std::vector<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>> obs_vec;
+        obs_vec.reserve(num_observables);
+        for (int i = 0; i < num_observables; ++i) {
+            if (!observables[i] || observables[i]->precision != PREC_ID || !observables[i]->impl) {
+                set_last_error("qkrylov_time_evolve: invalid observable");
+                return QKRYLOV_ERROR_INVALID_ARG;
+            }
+            obs_vec.push_back(*static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(observables[i]->impl.get()));
+        }
+
+        auto rt_res = time_evolve<Kokkos::DefaultExecutionSpace>(*H, psi0_host, t_grid, obs_vec, n_steps);
+
+        result->num_times = num_times;
+        result->num_observables = num_observables;
+
+        auto* out_times = new Scalar[num_times];
+        auto* out_surv_re = new Scalar[num_times];
+        auto* out_surv_im = new Scalar[num_times];
+        for (int ti = 0; ti < num_times; ++ti) {
+            out_times[ti] = static_cast<Scalar>(rt_res.time_grid[ti]);
+            out_surv_re[ti] = static_cast<Scalar>(rt_res.survival_probabilities[ti].real());
+            out_surv_im[ti] = static_cast<Scalar>(rt_res.survival_probabilities[ti].imag());
+        }
+        result->time_grid = out_times;
+        result->survival_probabilities_re = out_surv_re;
+        result->survival_probabilities_im = out_surv_im;
+
+        if (num_observables > 0) {
+            auto* out_obs_re = new Scalar[num_observables * num_times];
+            auto* out_obs_im = new Scalar[num_observables * num_times];
+            for (int oi = 0; oi < num_observables; ++oi) {
+                for (int ti = 0; ti < num_times; ++ti) {
+                    out_obs_re[oi * num_times + ti] = static_cast<Scalar>(rt_res.observable_expectations[oi][ti].real());
+                    out_obs_im[oi * num_times + ti] = static_cast<Scalar>(rt_res.observable_expectations[oi][ti].imag());
+                }
+            }
+            result->observable_expectations_re = out_obs_re;
+            result->observable_expectations_im = out_obs_im;
+        } else {
+            result->observable_expectations_re = nullptr;
+            result->observable_expectations_im = nullptr;
+        }
+
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_time_evolve");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+void SUFFIX(qkrylov_real_time_result_free)(RealTimeResT* result) {
+    if (!result) return;
+    delete[] result->time_grid;
+    delete[] result->survival_probabilities_re;
+    delete[] result->survival_probabilities_im;
+    if (result->observable_expectations_re) delete[] result->observable_expectations_re;
+    if (result->observable_expectations_im) delete[] result->observable_expectations_im;
+    result->time_grid = nullptr;
+    result->survival_probabilities_re = nullptr;
+    result->survival_probabilities_im = nullptr;
+    result->observable_expectations_re = nullptr;
+    result->observable_expectations_im = nullptr;
+    result->num_times = 0;
+    result->num_observables = 0;
+}
+
+int SUFFIX(qkrylov_ftlm_dynamics)(
+    qkrylov_hamiltonian_h h,
+    Scalar beta,
+    qkrylov_hamiltonian_h a,
+    qkrylov_hamiltonian_h b,
+    const Scalar* time_grid,
+    int num_times,
+    int n_random,
+    int n_steps,
+    uint64_t seed,
+    FTLMDynamicsResT* result)
+{
+    if (!h || !h->impl || !a || !a->impl || !b || !b->impl || !time_grid || num_times <= 0 || !result) {
+        set_last_error("qkrylov_ftlm_dynamics: invalid null argument");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (h->precision != PREC_ID || a->precision != PREC_ID || b->precision != PREC_ID) {
+        set_last_error("qkrylov_ftlm_dynamics: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (n_random <= 0 || n_steps <= 0) {
+        set_last_error("qkrylov_ftlm_dynamics: n_random and n_steps must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+
+    try {
+        auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
+        auto* A = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(a->impl.get());
+        auto* B = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(b->impl.get());
+
+        std::vector<Real> t_grid(num_times);
+        for (int i = 0; i < num_times; ++i) t_grid[i] = static_cast<Real>(time_grid[i]);
+
+        auto dyn_res = ftlm_dynamics<Kokkos::DefaultExecutionSpace>(*H, static_cast<Real>(beta), *A, *B, t_grid, n_random, n_steps, seed);
+
+        result->beta = static_cast<Scalar>(dyn_res.beta);
+        result->num_times = num_times;
+
+        auto* out_times = new Scalar[num_times];
+        auto* out_corr_re = new Scalar[num_times];
+        auto* out_corr_im = new Scalar[num_times];
+        auto* out_err = new Scalar[num_times];
+
+        for (int ti = 0; ti < num_times; ++ti) {
+            out_times[ti] = static_cast<Scalar>(dyn_res.time_grid[ti]);
+            out_corr_re[ti] = static_cast<Scalar>(dyn_res.correlations[ti].real());
+            out_corr_im[ti] = static_cast<Scalar>(dyn_res.correlations[ti].imag());
+            out_err[ti] = static_cast<Scalar>(dyn_res.correlation_errors[ti]);
+        }
+
+        result->time_grid = out_times;
+        result->correlations_re = out_corr_re;
+        result->correlations_im = out_corr_im;
+        result->correlation_errors = out_err;
+
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_ftlm_dynamics");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+void SUFFIX(qkrylov_ftlm_dynamics_result_free)(FTLMDynamicsResT* result) {
+    if (!result) return;
+    delete[] result->time_grid;
+    delete[] result->correlations_re;
+    delete[] result->correlations_im;
+    delete[] result->correlation_errors;
+    result->time_grid = nullptr;
+    result->correlations_re = nullptr;
+    result->correlations_im = nullptr;
+    result->correlation_errors = nullptr;
+    result->num_times = 0;
 }
 
 int SUFFIX(qkrylov_solver_correction_vector)(

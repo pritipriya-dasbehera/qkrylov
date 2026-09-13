@@ -182,6 +182,36 @@ static void bind_backend(nb::module_& m, const std::string& suffix, const std::s
         },
         "samples"_a, "beta_grid"_a);
 
+    std::string ftlm_streamed_name = "ftlm_sweep_streamed_" + suffix + type_suffix;
+    m.def(ftlm_streamed_name.c_str(),
+        [](const HType& H, const std::vector<Real>& beta_grid,
+           const std::vector<HType>& observables,
+           int n_random, int n_steps, uint64_t seed) {
+            return ftlm_sweep_streamed<ExecSpace>(H, beta_grid, observables, n_random, n_steps, seed);
+        },
+        "H"_a, "beta_grid"_a, "observables"_a = std::vector<HType>{},
+        "n_random"_a = 50, "n_steps"_a = 100, "seed"_a = 42);
+
+    std::string time_evolve_name = "time_evolve_" + suffix + type_suffix;
+    m.def(time_evolve_name.c_str(),
+        [](const HType& H, CxArray psi0, const std::vector<Real>& time_grid,
+           const std::vector<HType>& observables, int n_steps) {
+            if (psi0.shape(0) != static_cast<size_t>(H.dimension())) {
+                throw std::invalid_argument("psi0 vector size does not match Hamiltonian dimension");
+            }
+            const HostVector psi0_vec(psi0.data(), psi0.data() + psi0.shape(0));
+            return time_evolve<ExecSpace>(H, psi0_vec, time_grid, observables, n_steps);
+        },
+        "H"_a, "psi0"_a, "time_grid"_a, "observables"_a = std::vector<HType>{}, "n_steps"_a = 30);
+
+    std::string ftlm_dynamics_name = "ftlm_dynamics_" + suffix + type_suffix;
+    m.def(ftlm_dynamics_name.c_str(),
+        [](const HType& H, Real beta, const HType& A, const HType& B,
+           const std::vector<Real>& time_grid, int n_random, int n_steps, uint64_t seed) {
+            return ftlm_dynamics<ExecSpace>(H, beta, A, B, time_grid, n_random, n_steps, seed);
+        },
+        "H"_a, "beta"_a, "A"_a, "B"_a, "time_grid"_a, "n_random"_a = 50, "n_steps"_a = 100, "seed"_a = 42);
+
 
     std::string cv_name = "correction_vector_spectral_" + suffix + type_suffix;
     m.def(cv_name.c_str(),
@@ -264,6 +294,17 @@ static void bind_impl(nb::module_& m, const std::string& type_suffix) {
         .def_rw("eigenvalues", &DavidsonResult::eigenvalues)
         .def_rw("eigenvectors", &DavidsonResult::eigenvectors);
 
+    nb::class_<RealTimeResult>(m, ("RealTimeResult" + type_suffix).c_str())
+        .def_rw("time_grid", &RealTimeResult::time_grid)
+        .def_rw("survival_probabilities", &RealTimeResult::survival_probabilities)
+        .def_rw("observable_expectations", &RealTimeResult::observable_expectations);
+
+    nb::class_<FTLMDynamicsResult>(m, ("FTLMDynamicsResult" + type_suffix).c_str())
+        .def_rw("beta", &FTLMDynamicsResult::beta)
+        .def_rw("time_grid", &FTLMDynamicsResult::time_grid)
+        .def_rw("correlations", &FTLMDynamicsResult::correlations)
+        .def_rw("correlation_errors", &FTLMDynamicsResult::correlation_errors);
+
     nb::class_<FTLMResult>(m, ("FTLMResult" + type_suffix).c_str())
         .def_rw("beta", &FTLMResult::beta)
         .def_rw("partition_function", &FTLMResult::partition_function)
@@ -272,7 +313,9 @@ static void bind_impl(nb::module_& m, const std::string& type_suffix) {
         .def_rw("specific_heat", &FTLMResult::specific_heat)
         .def_rw("entropy", &FTLMResult::entropy)
         .def_rw("observable_expectations", &FTLMResult::observable_expectations)
-        .def_rw("observable_errors", &FTLMResult::observable_errors);
+        .def_rw("observable_errors", &FTLMResult::observable_errors)
+        .def_rw("dimension", &FTLMResult::dimension)
+        .def_rw("effective_samples", &FTLMResult::effective_samples);
 
     nb::class_<FTLMSweepResult>(m, ("FTLMSweepResult" + type_suffix).c_str())
         .def_rw("beta_grid", &FTLMSweepResult::beta_grid)
@@ -282,7 +325,9 @@ static void bind_impl(nb::module_& m, const std::string& type_suffix) {
         .def_rw("specific_heats", &FTLMSweepResult::specific_heats)
         .def_rw("entropies", &FTLMSweepResult::entropies)
         .def_rw("observable_expectations", &FTLMSweepResult::observable_expectations)
-        .def_rw("observable_errors", &FTLMSweepResult::observable_errors);
+        .def_rw("observable_errors", &FTLMSweepResult::observable_errors)
+        .def_rw("dimension", &FTLMSweepResult::dimension)
+        .def_rw("effective_samples", &FTLMSweepResult::effective_samples);
 
     nb::class_<FTLMSamplesHolder>(m, ("FTLMSamples" + type_suffix).c_str())
         .def("__len__", &FTLMSamplesHolder::size)

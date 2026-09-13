@@ -319,4 +319,98 @@ def test_ftlm_decoupled_workflow():
     assert len(res32.beta_grid) == 3
 
 
+def test_ftlm_streamed_workflow():
+    _, _, _, H = _build_heisenberg_model(N=4, dtype=np.float64)
+    betas = [0.2, 0.5, 1.0, 2.0]
+    
+    # Streamed mode (memory-bounded two-pass)
+    res_streamed = qk.solvers.ftlm_sweep_streamed(
+        H, betas=betas, observables=[H], n_random=20, n_steps=25, seed=123
+    )
+    assert isinstance(res_streamed, FTLMSweepResult)
+    assert res_streamed.dimension == 6
+    assert len(res_streamed.effective_samples) == len(betas)
+    assert np.all(res_streamed.effective_samples > 0.0)
+
+    # Cached mode with same seed
+    res_cached = qk.solvers.ftlm(
+        H, betas=betas, observables=[H], n_random=20, n_steps=25, seed=123, mode="cached"
+    )
+    assert isinstance(res_cached, FTLMSweepResult)
+    assert res_cached.dimension == 6
+
+    # Both modes should match closely
+    assert np.allclose(res_streamed.partition_functions, res_cached.partition_functions, rtol=1e-5)
+    assert np.allclose(res_streamed.internal_energies, res_cached.internal_energies, atol=1e-4)
+
+
+def test_real_time_dynamics():
+    # 2-site Heisenberg model: H = Sz0*Sz1 + 0.5*(Sp0*Sm1 + Sm0*Sp1)
+    basis = qk.SpinHalfBasis(N=2, dtype=np.float64)
+    site = qk.SpinHalfSite(dtype=np.float64)
+    opsum = qk.OpSum()
+    opsum += (1.0, "Sz", 0, "Sz", 1)
+    opsum += (0.5, "Sp", 0, "Sm", 1)
+    opsum += (0.5, "Sm", 0, "Sp", 1)
+    H = qk.MatrixFreeHamiltonian(basis, site, opsum, dtype=np.float64)
+
+    # Observable Sz0
+    op_sz0 = qk.OpSum()
+    op_sz0 += (1.0, "Sz", 0)
+    Sz0 = qk.MatrixFreeHamiltonian(basis, site, op_sz0, dtype=np.float64)
+
+    # Observable Sz1
+    op_sz1 = qk.OpSum()
+    op_sz1 += (1.0, "Sz", 1)
+    Sz1 = qk.MatrixFreeHamiltonian(basis, site, op_sz1, dtype=np.float64)
+
+    # Find |up, down> state
+    d0 = Sz0.diagonal()
+    d1 = Sz1.diagonal()
+    psi0 = np.zeros(H.dimension, dtype=np.complex128)
+    for i in range(H.dimension):
+        if math.isclose(d0[i].real, 0.5, abs_tol=1e-5) and math.isclose(d1[i].real, -0.5, abs_tol=1e-5):
+            psi0[i] = 1.0
+            break
+
+    time_grid = [0.0, 0.5, 1.0, 1.5, 2.0, math.pi]
+    res = qk.solvers.time_evolve(H, psi0, time_grid, observables=[Sz0], n_steps=10)
+    assert isinstance(res, qk.solvers.RealTimeResult)
+    assert len(res.time_grid) == len(time_grid)
+    assert len(res.survival_probabilities) == len(time_grid)
+    assert len(res.observable_expectations) == 1
+
+    # Check Rabi oscillations: <Sz0>(t) = 0.5 * cos(Delta E * t) with Delta E = 1.0
+    for t, exp_val in zip(time_grid, res.observable_expectations[0]):
+        expected = 0.5 * math.cos(t)
+        assert math.isclose(exp_val.real, expected, abs_tol=1e-3)
+        assert math.isclose(exp_val.imag, 0.0, abs_tol=1e-3)
+
+
+def test_ftlm_dynamics():
+    basis = qk.SpinHalfBasis(N=2, dtype=np.float64)
+    site = qk.SpinHalfSite(dtype=np.float64)
+    opsum = qk.OpSum()
+    opsum += (1.0, "Sz", 0, "Sz", 1)
+    opsum += (0.5, "Sp", 0, "Sm", 1)
+    opsum += (0.5, "Sm", 0, "Sp", 1)
+    H = qk.MatrixFreeHamiltonian(basis, site, opsum, dtype=np.float64)
+
+    op_sz0 = qk.OpSum()
+    op_sz0 += (1.0, "Sz", 0)
+    Sz0 = qk.MatrixFreeHamiltonian(basis, site, op_sz0, dtype=np.float64)
+
+    time_grid = [0.0, 0.5, 1.0]
+    res = qk.solvers.ftlm_dynamics(H, Sz0, Sz0, beta=1.0, time_grid=time_grid, n_random=50, n_steps=10, seed=42)
+    assert isinstance(res, qk.solvers.FTLMDynamicsResult)
+    assert len(res.time_grid) == 3
+    assert len(res.correlations) == 3
+    assert len(res.correlation_errors) == 3
+
+    # At t=0, C_AB(0) = <Sz0^2> = 1/4 = 0.25
+    assert math.isclose(res.correlations[0].real, 0.25, abs_tol=0.05)
+    assert math.isclose(res.correlations[0].imag, 0.0, abs_tol=0.05)
+
+
+
 

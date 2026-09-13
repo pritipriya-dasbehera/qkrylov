@@ -422,6 +422,37 @@ int main() {
 
     qkrylov_ftlm_sweep_result_free_fp64(&sweep_res64);
 
+    // Test Streamed FTLM (FP64)
+    qkrylov_ftlm_sweep_result_fp64_t streamed_res64;
+    int streamed_status = qkrylov_ftlm_sweep_streamed_fp64(H, betas_sweep, 3, obs_arr, 1, 20, 10, 42, &streamed_res64);
+    assert(streamed_status == QKRYLOV_SUCCESS);
+    assert(streamed_res64.num_betas == 3);
+    assert(streamed_res64.dimension == dim);
+    assert(streamed_res64.effective_samples != nullptr);
+    assert(streamed_res64.observable_expectations_re != nullptr);
+    assert(streamed_res64.observable_expectations_im != nullptr);
+    qkrylov_ftlm_sweep_result_free_fp64(&streamed_res64);
+
+    // Test Real-Time Evolution (FP64)
+    double psi0[8] = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    double time_grid[2] = {0.0, 1.0};
+    qkrylov_real_time_result_fp64_t rt_res64;
+    int rt_status = qkrylov_time_evolve_fp64(H, psi0, time_grid, 2, obs_arr, 1, 10, &rt_res64);
+    assert(rt_status == QKRYLOV_SUCCESS);
+    assert(rt_res64.num_times == 2);
+    assert(rt_res64.survival_probabilities_re != nullptr);
+    assert(rt_res64.observable_expectations_re != nullptr);
+    qkrylov_real_time_result_free_fp64(&rt_res64);
+
+    // Test FTLM Dynamics (FP64)
+    qkrylov_ftlm_dynamics_result_fp64_t dyn_res64;
+    int ftlm_dyn_status64 = qkrylov_ftlm_dynamics_fp64(H, 1.0, H, H, time_grid, 2, 20, 10, 42, &dyn_res64);
+    assert(ftlm_dyn_status64 == QKRYLOV_SUCCESS);
+    assert(dyn_res64.num_times == 2);
+    assert(dyn_res64.correlations_re != nullptr);
+    assert(dyn_res64.correlation_errors != nullptr);
+    qkrylov_ftlm_dynamics_result_free_fp64(&dyn_res64);
+
     // =========================================================================
     // PART B: Single Precision (FP32) C API Verification
     // =========================================================================
@@ -510,6 +541,34 @@ int main() {
     qkrylov_ftlm_samples_destroy(samples32);
 
     qkrylov_ftlm_sweep_result_free_fp32(&sweep_res32);
+
+    // Test Streamed FTLM (FP32)
+    qkrylov_ftlm_sweep_result_fp32_t streamed_res32;
+    int streamed_status32 = qkrylov_ftlm_sweep_streamed_fp32(H32, betas_sweep32, 2, obs_arr32, 1, 20, 10, 42, &streamed_res32);
+    assert(streamed_status32 == QKRYLOV_SUCCESS);
+    assert(streamed_res32.num_betas == 2);
+    assert(streamed_res32.dimension == dim);
+    assert(streamed_res32.effective_samples != nullptr);
+    qkrylov_ftlm_sweep_result_free_fp32(&streamed_res32);
+
+    // Test Real-Time Evolution (FP32)
+    float psi0_32[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    float time_grid32[2] = {0.0f, 1.0f};
+    qkrylov_real_time_result_fp32_t rt_res32;
+    int rt_status32 = qkrylov_time_evolve_fp32(H32, psi0_32, time_grid32, 2, obs_arr32, 1, 10, &rt_res32);
+    assert(rt_status32 == QKRYLOV_SUCCESS);
+    assert(rt_res32.num_times == 2);
+    assert(rt_res32.survival_probabilities_re != nullptr);
+    qkrylov_real_time_result_free_fp32(&rt_res32);
+
+    // Test FTLM Dynamics (FP32)
+    qkrylov_ftlm_dynamics_result_fp32_t dyn_res32;
+    int dyn_status32 = qkrylov_ftlm_dynamics_fp32(H32, 1.0f, H32, H32, time_grid32, 2, 20, 10, 42, &dyn_res32);
+    assert(dyn_status32 == QKRYLOV_SUCCESS);
+    assert(dyn_res32.num_times == 2);
+    assert(dyn_res32.correlations_re != nullptr);
+    assert(dyn_res32.correlation_errors != nullptr);
+    qkrylov_ftlm_dynamics_result_free_fp32(&dyn_res32);
 
     // Cleanup Hamiltonians
     qkrylov_hamiltonian_destroy(H);

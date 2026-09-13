@@ -20,8 +20,10 @@ The `qkrylov` C ABI defines a flat, binary-stable `extern "C"` application binar
     - [10.2 Multi-State Lanczos with DGKS Reorthogonalization](#102-multi-state-lanczos-with-dgks-reorthogonalization)
     - [10.3 Block Davidson Solver](#103-block-davidson-solver)
     - [10.4 Dynamical Continued Fraction Spectroscopy](#104-dynamical-continued-fraction-spectroscopy)
-    - [10.5 Finite-Temperature Lanczos Method (FTLM Sweep)](#105-finite-temperature-lanczos-method-ftlm-sweep)
-    - [10.6 Correction Vector Method](#106-correction-vector-method)
+    - [10.5 Finite-Temperature Lanczos Method (Dual Workflows: Streamed & Cached)](#105-finite-temperature-lanczos-method-dual-workflows-streamed--cached)
+    - [10.6 Pure-State Real-Time Dynamics (time_evolve)](#106-pure-state-real-time-dynamics-time_evolve)
+    - [10.7 Finite-Temperature Dynamical Correlators (ftlm_dynamics)](#107-finite-temperature-dynamical-correlators-ftlm_dynamics)
+    - [10.8 Correction Vector Method](#108-correction-vector-method)
 11. [Parallel Vector BLAS-1 API (Host & Device-Resident)](#11-parallel-vector-blas-1-api-host--device-resident)
 12. [Complete C Program Usage Example](#12-complete-c-program-usage-example)
 
@@ -395,7 +397,7 @@ float  qkrylov_evaluate_spectral_function_fp32(const float* alphas, const float*
 double qkrylov_evaluate_spectral_function_fp64(const double* alphas, const double* betas, size_t n, double norm_phi0, double omega, double E0, double eta);
 ```
 
-### 10.5 Finite-Temperature Lanczos Method (FTLM)
+### 10.5 Finite-Temperature Lanczos Method (Dual Workflows: Streamed & Cached)
 
 #### 10.5.1 Result Structs
 ```c
@@ -420,77 +422,201 @@ typedef struct {
 typedef struct {
     int num_betas;
     int num_observables;
+    int64_t dimension;
     const float* beta_grid;
     const float* partition_functions;
     const float* free_energies;
     const float* internal_energies;
     const float* specific_heats;
     const float* entropies;
-    const float* observable_expectations; /* Row-major: num_observables x num_betas */
-    const float* observable_errors;       /* Row-major: num_observables x num_betas */
+    const float* effective_samples;          /* R_eff(beta) diagnostic array */
+    const float* observable_expectations_re; /* Row-major: num_observables x num_betas */
+    const float* observable_expectations_im; /* Row-major: num_observables x num_betas */
+    const float* observable_expectations;    /* Points to observable_expectations_re */
+    const float* observable_errors;          /* Row-major: num_observables x num_betas */
 } qkrylov_ftlm_sweep_result_fp32_t;
 
 typedef struct {
     int num_betas;
     int num_observables;
+    int64_t dimension;
     const double* beta_grid;
     const double* partition_functions;
     const double* free_energies;
     const double* internal_energies;
     const double* specific_heats;
     const double* entropies;
-    const double* observable_expectations; /* Row-major: num_observables x num_betas */
-    const double* observable_errors;       /* Row-major: num_observables x num_betas */
+    const double* effective_samples;          /* R_eff(beta) diagnostic array */
+    const double* observable_expectations_re; /* Row-major: num_observables x num_betas */
+    const double* observable_expectations_im; /* Row-major: num_observables x num_betas */
+    const double* observable_expectations;    /* Points to observable_expectations_re */
+    const double* observable_errors;          /* Row-major: num_observables x num_betas */
 } qkrylov_ftlm_sweep_result_fp64_t;
 ```
 
-#### 10.5.2 Decoupled 2-Stage FTLM Workflow
-Krylov expansions and observable projections are performed once in Stage 1 and stored in an opaque `qkrylov_ftlm_samples_h` handle. Stage 2 evaluates thermodynamic properties across arbitrary temperature grids with zero additional SpMV operations.
+#### 10.5.2 Dual FTLM Workflows
+
+`qkrylov` provides two first-class FTLM execution modes:
+
+1. **Streamed Two-Pass Mode (`qkrylov_ftlm_sweep_streamed_fp64/fp32`)**:
+   - **Peak Host RAM**: Bounded strictly to $\mathcal{O}(M^2 N_{\text{obs}})$ (~16 MB).
+   - **Execution**: Pass 1 runs Lanczos on $\hat{H}$ only, discovers the global shift $E_{\min}$, and caches recurrence coefficients. Pass 2 streams through samples $r = 1 \dots R$, projects observables into $M \times M$ matrices, accumulates Boltzmann sums for the input `beta_grid` on the fly, and **immediately frees** basis vectors and operator matrices.
+   - **Recommended for**: Large Hilbert spaces, large numbers of observables ($N_{\text{obs}} \ge 10$), and production runs.
+
+2. **Cached Mode (`qkrylov_ftlm_sample_fp64/fp32` + `qkrylov_ftlm_evaluate_sweep_fp64/fp32`)**:
+   - **Peak Host RAM**: $\mathcal{O}(R \cdot M^2 N_{\text{obs}})$ (~8 GB).
+   - **Execution**: Stage 1 performs $R$ Krylov walks and operator projections, storing the sample collection in an opaque `qkrylov_ftlm_samples_h` handle. Stage 2 evaluates thermodynamic properties on an arbitrary `beta_grid` with **zero additional SpMV operations**.
+   - **Recommended for**: Interactive exploration and parameter sweeps across arbitrary temperature grids.
+
+#### 10.5.3 C ABI Function Signatures
 
 ```c
-// Stage 1: Generate Krylov samples & project observables
-int qkrylov_ftlm_sample_fp32(qkrylov_hamiltonian_h h, const qkrylov_hamiltonian_h* observables, int num_observables,
+// Mode 1: Streamed Two-Pass Sweep (O(M^2 * N_obs) RAM)
+int qkrylov_ftlm_sweep_streamed_fp32(qkrylov_hamiltonian_h H, const float* beta_grid, int num_betas,
+                                     const qkrylov_hamiltonian_h* observables, int num_observables,
+                                     int n_random, int n_steps, uint64_t seed,
+                                     qkrylov_ftlm_sweep_result_fp32_t* result);
+int qkrylov_ftlm_sweep_streamed_fp64(qkrylov_hamiltonian_h H, const double* beta_grid, int num_betas,
+                                     const qkrylov_hamiltonian_h* observables, int num_observables,
+                                     int n_random, int n_steps, uint64_t seed,
+                                     qkrylov_ftlm_sweep_result_fp64_t* result);
+
+// Mode 2: Cached Stage 1 (Krylov Subspace Sampling)
+int qkrylov_ftlm_sample_fp32(qkrylov_hamiltonian_h H, const qkrylov_hamiltonian_h* observables, int num_observables,
                              int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_samples_h* out_samples);
-int qkrylov_ftlm_sample_fp64(qkrylov_hamiltonian_h h, const qkrylov_hamiltonian_h* observables, int num_observables,
+int qkrylov_ftlm_sample_fp64(qkrylov_hamiltonian_h H, const qkrylov_hamiltonian_h* observables, int num_observables,
                              int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_samples_h* out_samples);
 
-// Stage 2: Fast Boltzmann temperature evaluation (zero SpMV cost)
+// Mode 2: Cached Stage 2 (Fast Zero-SpMV Evaluation on Arbitrary Betas)
 int qkrylov_ftlm_evaluate_sweep_fp32(qkrylov_ftlm_samples_h samples, const float* beta_grid, int num_betas,
                                      qkrylov_ftlm_sweep_result_fp32_t* result);
 int qkrylov_ftlm_evaluate_sweep_fp64(qkrylov_ftlm_samples_h samples, const double* beta_grid, int num_betas,
                                      qkrylov_ftlm_sweep_result_fp64_t* result);
 
-// Sample Handle Lifecycle & Inspection
-void qkrylov_ftlm_samples_destroy(qkrylov_ftlm_samples_h samples);
-int  qkrylov_ftlm_samples_precision(qkrylov_ftlm_samples_h samples); // Returns 0 for FP32, 1 for FP64
-```
-> [!IMPORTANT]
-> Passing an FP32 `qkrylov_ftlm_samples_h` to an FP64 evaluation function (or vice-versa) returns `QKRYLOV_ERROR_INVALID_ARG` ("precision mismatch").
-
-#### 10.5.3 End-to-End Sweeps & Single-Point FTLM
-```c
-// Full combined sweep (executes Stage 1 + Stage 2 internally)
-int qkrylov_ftlm_sweep_fp32(qkrylov_hamiltonian_h h, const float* beta_grid, int num_betas,
+// Default combined sweep (aliases cached workflow)
+int qkrylov_ftlm_sweep_fp32(qkrylov_hamiltonian_h H, const float* beta_grid, int num_betas,
                             const qkrylov_hamiltonian_h* observables, int num_observables,
                             int n_random, int n_steps, uint64_t seed,
                             qkrylov_ftlm_sweep_result_fp32_t* result);
-int qkrylov_ftlm_sweep_fp64(qkrylov_hamiltonian_h h, const double* beta_grid, int num_betas,
+int qkrylov_ftlm_sweep_fp64(qkrylov_hamiltonian_h H, const double* beta_grid, int num_betas,
                             const qkrylov_hamiltonian_h* observables, int num_observables,
                             int n_random, int n_steps, uint64_t seed,
                             qkrylov_ftlm_sweep_result_fp64_t* result);
 
-// Memory cleanup for sweep results
+// Single temperature point evaluation
+int qkrylov_ftlm_fp32(qkrylov_hamiltonian_h H, float beta, int n_random, int n_steps, qkrylov_ftlm_result_fp32_t* result);
+int qkrylov_ftlm_fp64(qkrylov_hamiltonian_h H, double beta, int n_random, int n_steps, qkrylov_ftlm_result_fp64_t* result);
+
+// Memory cleanup for sweep results & sample handles
 void qkrylov_ftlm_sweep_result_free_fp32(qkrylov_ftlm_sweep_result_fp32_t* result);
 void qkrylov_ftlm_sweep_result_free_fp64(qkrylov_ftlm_sweep_result_fp64_t* result);
-
-// Single temperature point evaluation
-int qkrylov_ftlm_fp32(qkrylov_hamiltonian_h h, float beta, int n_random, int n_steps, qkrylov_ftlm_result_fp32_t* result);
-int qkrylov_ftlm_fp64(qkrylov_hamiltonian_h h, double beta, int n_random, int n_steps, qkrylov_ftlm_result_fp64_t* result);
+void qkrylov_ftlm_samples_destroy(qkrylov_ftlm_samples_h samples);
+int  qkrylov_ftlm_samples_precision(qkrylov_ftlm_samples_h samples); // 0: FP32, 1: FP64
 ```
 
 ---
 
-### 10.6 Correction Vector Method
+### 10.6 Pure-State Real-Time Dynamics (`time_evolve`)
+
+Propagates an arbitrary initial pure state $|\psi(0)\rangle$ under unitary time evolution:
+$$|\psi(t)\rangle = e^{-i \hat{H} t} |\psi(0)\rangle$$
+and evaluates time-dependent survival probabilities $\mathcal{L}(t) = |\langle \psi(0) | \psi(t) \rangle|^2$ and complex expectation values $\langle \hat{O} \rangle(t) = \langle \psi(t) | \hat{O} | \psi(t) \rangle$.
+
+```c
+typedef struct {
+    int num_times;
+    int num_observables;
+    const float* time_grid;
+    const float* survival_probabilities_re;
+    const float* survival_probabilities_im;
+    const float* observable_expectations_re; /* Row-major: num_times x num_observables */
+    const float* observable_expectations_im; /* Row-major: num_times x num_observables */
+} qkrylov_real_time_result_fp32_t;
+
+typedef struct {
+    int num_times;
+    int num_observables;
+    const double* time_grid;
+    const double* survival_probabilities_re;
+    const double* survival_probabilities_im;
+    const double* observable_expectations_re; /* Row-major: num_times x num_observables */
+    const double* observable_expectations_im; /* Row-major: num_times x num_observables */
+} qkrylov_real_time_result_fp64_t;
+
+int qkrylov_time_evolve_fp32(
+    qkrylov_hamiltonian_h H,
+    const float* psi0_complex,
+    const float* time_grid, int num_times,
+    const qkrylov_hamiltonian_h* observables, int num_observables,
+    int n_steps,
+    qkrylov_real_time_result_fp32_t* result
+);
+int qkrylov_time_evolve_fp64(
+    qkrylov_hamiltonian_h H,
+    const double* psi0_complex,
+    const double* time_grid, int num_times,
+    const qkrylov_hamiltonian_h* observables, int num_observables,
+    int n_steps,
+    qkrylov_real_time_result_fp64_t* result
+);
+
+void qkrylov_real_time_result_free_fp32(qkrylov_real_time_result_fp32_t* result);
+void qkrylov_real_time_result_free_fp64(qkrylov_real_time_result_fp64_t* result);
+```
+
+---
+
+### 10.7 Finite-Temperature Dynamical Correlators (`ftlm_dynamics`)
+
+Computes the unequal-time thermal correlation function:
+$$C_{AB}(t; \beta) = \langle \hat{A}(t) \hat{B}(0) \rangle_\beta = \frac{1}{Z(\beta)} \operatorname{Tr}\left( e^{-\beta \hat{H}} e^{i \hat{H} t} \hat{A} e^{-i \hat{H} t} \hat{B} \right)$$
+using **dual-Krylov propagation**: forms $|\chi_0\rangle = \hat{B} |\phi\rangle$ in the full Hilbert space and evolves it in its own Krylov subspace, eliminating projected operator truncation error and yielding machine-precision accuracy at $t=0$.
+
+```c
+typedef struct {
+    float beta;
+    int num_times;
+    const float* time_grid;
+    const float* correlations_re;
+    const float* correlations_im;
+    const float* correlation_errors;
+} qkrylov_ftlm_dynamics_result_fp32_t;
+
+typedef struct {
+    double beta;
+    int num_times;
+    const double* time_grid;
+    const double* correlations_re;
+    const double* correlations_im;
+    const double* correlation_errors;
+} qkrylov_ftlm_dynamics_result_fp64_t;
+
+int qkrylov_ftlm_dynamics_fp32(
+    qkrylov_hamiltonian_h H,
+    float beta,
+    qkrylov_hamiltonian_h A,
+    qkrylov_hamiltonian_h B,
+    const float* time_grid, int num_times,
+    int n_random, int n_steps, uint64_t seed,
+    qkrylov_ftlm_dynamics_result_fp32_t* result
+);
+int qkrylov_ftlm_dynamics_fp64(
+    qkrylov_hamiltonian_h H,
+    double beta,
+    qkrylov_hamiltonian_h A,
+    qkrylov_hamiltonian_h B,
+    const double* time_grid, int num_times,
+    int n_random, int n_steps, uint64_t seed,
+    qkrylov_ftlm_dynamics_result_fp64_t* result
+);
+
+void qkrylov_ftlm_dynamics_result_free_fp32(qkrylov_ftlm_dynamics_result_fp32_t* result);
+void qkrylov_ftlm_dynamics_result_free_fp64(qkrylov_ftlm_dynamics_result_fp64_t* result);
+```
+
+---
+
+### 10.8 Correction Vector Method
 
 ```c
 typedef struct { double spectral_function; int iterations; int converged; } qkrylov_correction_vector_result_fp64_t;
