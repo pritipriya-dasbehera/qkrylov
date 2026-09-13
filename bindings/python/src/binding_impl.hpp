@@ -72,6 +72,19 @@ dvec_to_numpy(std::vector<Real>&& v)
     );
 }
 
+namespace qkrylov {
+namespace QKRYLOV_PRECISION_NAMESPACE {
+
+struct FTLMSamplesHolder {
+    std::vector<FTLMKrylovSample> samples;
+    size_t size() const { return samples.size(); }
+};
+
+} // namespace QKRYLOV_PRECISION_NAMESPACE
+} // namespace qkrylov
+
+
+
 
 template <typename ExecSpace>
 static void bind_backend(nb::module_& m, const std::string& suffix, const std::string& type_suffix) {
@@ -151,6 +164,24 @@ static void bind_backend(nb::module_& m, const std::string& suffix, const std::s
         },
         "H"_a, "beta_grid"_a, "observables"_a = std::vector<HType>{},
         "n_random"_a = 50, "n_steps"_a = 100, "seed"_a = 42);
+
+    std::string ftlm_sample_name = "ftlm_sample_" + suffix + type_suffix;
+    m.def(ftlm_sample_name.c_str(),
+        [](const HType& H, const std::vector<HType>& observables,
+           int n_random, int n_steps, uint64_t seed) {
+            auto samples = ftlm_sample<ExecSpace>(H, observables, n_random, n_steps, seed);
+            return FTLMSamplesHolder{std::move(samples)};
+        },
+        "H"_a, "observables"_a = std::vector<HType>{},
+        "n_random"_a = 50, "n_steps"_a = 100, "seed"_a = 42);
+
+    std::string ftlm_eval_name = "ftlm_evaluate_sweep_" + suffix + type_suffix;
+    m.def(ftlm_eval_name.c_str(),
+        [](const FTLMSamplesHolder& holder, const std::vector<Real>& beta_grid) {
+            return ftlm_evaluate_sweep(holder.samples, beta_grid);
+        },
+        "samples"_a, "beta_grid"_a);
+
 
     std::string cv_name = "correction_vector_spectral_" + suffix + type_suffix;
     m.def(cv_name.c_str(),
@@ -252,6 +283,11 @@ static void bind_impl(nb::module_& m, const std::string& type_suffix) {
         .def_rw("entropies", &FTLMSweepResult::entropies)
         .def_rw("observable_expectations", &FTLMSweepResult::observable_expectations)
         .def_rw("observable_errors", &FTLMSweepResult::observable_errors);
+
+    nb::class_<FTLMSamplesHolder>(m, ("FTLMSamples" + type_suffix).c_str())
+        .def("__len__", &FTLMSamplesHolder::size)
+        .def_prop_ro("num_samples", &FTLMSamplesHolder::size);
+
 
     using DblArray = nb::ndarray<const Real, nb::shape<-1>, nb::c_contig, nb::device::cpu>;
     m.def(("evaluate_spectral_function" + type_suffix).c_str(),

@@ -272,3 +272,51 @@ def test_ftlm_sweep_oop_solver():
     assert isinstance(res_fn, FTLMSweepResult)
     assert np.allclose(res_fn.internal_energies, res.internal_energies)
 
+
+def test_ftlm_decoupled_workflow():
+    _, _, _, H = _build_heisenberg_model(N=4, dtype=np.float64)
+    betas = [0.2, 0.5, 1.0, 2.0]
+    solver = FTLM(n_random=15, n_steps=25, seed=123)
+
+    # Reference sweep
+    ref_sweep = solver.solve(H, betas=betas, observables=[H])
+
+    # Stage 1: Sample once
+    samples = solver.sample(H, observables=[H])
+    assert isinstance(samples, qk.solvers.FTLMSamples)
+    assert len(samples) == 15
+    assert samples.num_samples == 15
+
+    # Stage 2: Evaluate sweep
+    res1 = solver.evaluate_sweep(samples, betas=betas)
+    assert isinstance(res1, FTLMSweepResult)
+    assert np.allclose(res1.partition_functions, ref_sweep.partition_functions)
+    assert np.allclose(res1.internal_energies, ref_sweep.internal_energies)
+
+    # Stage 2 via sample method
+    res1_method = samples.evaluate_sweep(betas)
+    assert np.allclose(res1_method.internal_energies, ref_sweep.internal_energies)
+
+    # Zero-cost re-evaluation on new grid
+    dense_betas = np.linspace(0.1, 5.0, 25)
+    res_dense = samples.evaluate_sweep(dense_betas)
+    assert isinstance(res_dense, FTLMSweepResult)
+    assert len(res_dense.beta_grid) == 25
+    assert np.all(res_dense.partition_functions > 0.0)
+
+    # Functional API: ftlm_sample and ftlm_evaluate_sweep
+    samples_fn = qk.solvers.ftlm_sample(H, observables=[H], n_random=15, n_steps=25, seed=123)
+    res_fn = qk.solvers.ftlm_evaluate_sweep(samples_fn, betas)
+    assert np.allclose(res_fn.internal_energies, ref_sweep.internal_energies)
+
+    # Test FP32 decoupled FTLM
+    _, _, _, H32 = _build_heisenberg_model(N=4, dtype=np.float32)
+    solver32 = FTLM(n_random=10, n_steps=20, seed=42)
+    samples32 = solver32.sample(H32, observables=[H32])
+    assert isinstance(samples32, qk.solvers.FTLMSamples)
+    res32 = samples32.evaluate_sweep([0.5, 1.0, 2.0])
+    assert isinstance(res32, FTLMSweepResult)
+    assert len(res32.beta_grid) == 3
+
+
+

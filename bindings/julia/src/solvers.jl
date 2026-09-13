@@ -905,6 +905,177 @@ function ftlm_sweep(
     return FTLMSweepResult{Float32}(b_grid, z_arr, f_arr, e_arr, cv_arr, s_arr, obs_exp, obs_err)
 end
 
+# -----------------------------------------------------------------------------
+# Decoupled FTLM: Krylov Subspace Sampling & Instant Multi-Temperature Sweeps
+# -----------------------------------------------------------------------------
+
+"""
+    FTLMSamples{T<:Union{Float32, Float64}}
+
+Opaque handle holding stochastically generated Krylov subspace samples and projected
+observable matrices. Allows zero-cost re-evaluation across arbitrary temperature grids.
+"""
+mutable struct FTLMSamples{T<:Union{Float32, Float64}}
+    ptr::Ptr{Cvoid}
+    precision::Type{T}
+
+    function FTLMSamples{T}(ptr::Ptr{Cvoid}) where {T<:Union{Float32, Float64}}
+        obj = new{T}(ptr, T)
+        finalizer(obj) do o
+            if o.ptr != C_NULL
+                ccall((:qkrylov_ftlm_samples_destroy, libqkrylov), Cvoid, (Ptr{Cvoid},), o.ptr)
+                o.ptr = C_NULL
+            end
+        end
+        return obj
+    end
+end
+
+Base.unsafe_convert(::Type{Ptr{Cvoid}}, s::FTLMSamples) = s.ptr
+Base.show(io::IO, s::FTLMSamples{T}) where {T} = print(io, "FTLMSamples{$T}(ptr = $(s.ptr))")
+
+"""
+    ftlm_sample(H::MatrixFreeHamiltonian; observables=[], n_random=50, n_steps=100, seed=42) -> FTLMSamples
+
+Stage 1 of the decoupled FTLM workflow. Runs `n_random` Lanczos expansions of length `n_steps`
+on `H` and projects all operators in `observables` onto the Krylov subspace.
+Computes all computationally heavy matrix-vector products (SpMV) in this stage.
+"""
+function ftlm_sample(
+    H::MatrixFreeHamiltonian{Float64};
+    observables::Vector{<:MatrixFreeHamiltonian{Float64}}=MatrixFreeHamiltonian{Float64}[],
+    n_random::Integer=50,
+    n_steps::Integer=100,
+    seed::Integer=42
+)::FTLMSamples{Float64}
+    n_obs = length(observables)
+    obs_ptrs = [obs.ptr for obs in observables]
+    out_ptr = Ref{Ptr{Cvoid}}(C_NULL)
+
+    status = ccall(
+        (:qkrylov_ftlm_sample_fp64, libqkrylov),
+        Cint,
+        (Ptr{Cvoid}, Ptr{Ptr{Cvoid}}, Cint, Cint, Cint, Culonglong, Ref{Ptr{Cvoid}}),
+        H.ptr, isempty(obs_ptrs) ? C_NULL : pointer(obs_ptrs), Cint(n_obs), Cint(n_random), Cint(n_steps), Culonglong(seed), out_ptr
+    )
+    _check_status(status, "FTLM sampling failed")
+    return FTLMSamples{Float64}(out_ptr[])
+end
+
+function ftlm_sample(
+    H::MatrixFreeHamiltonian{Float32};
+    observables::Vector{<:MatrixFreeHamiltonian{Float32}}=MatrixFreeHamiltonian{Float32}[],
+    n_random::Integer=50,
+    n_steps::Integer=100,
+    seed::Integer=42
+)::FTLMSamples{Float32}
+    n_obs = length(observables)
+    obs_ptrs = [obs.ptr for obs in observables]
+    out_ptr = Ref{Ptr{Cvoid}}(C_NULL)
+
+    status = ccall(
+        (:qkrylov_ftlm_sample_fp32, libqkrylov),
+        Cint,
+        (Ptr{Cvoid}, Ptr{Ptr{Cvoid}}, Cint, Cint, Cint, Culonglong, Ref{Ptr{Cvoid}}),
+        H.ptr, isempty(obs_ptrs) ? C_NULL : pointer(obs_ptrs), Cint(n_obs), Cint(n_random), Cint(n_steps), Culonglong(seed), out_ptr
+    )
+    _check_status(status, "FTLM sampling failed")
+    return FTLMSamples{Float32}(out_ptr[])
+end
+
+"""
+    ftlm_evaluate_sweep(samples::FTLMSamples, betas) -> FTLMSweepResult
+
+Stage 2 of the decoupled FTLM workflow. Evaluates the thermodynamic equations of state
+and all projected observables on the grid `betas` with zero additional matrix-vector products.
+"""
+function ftlm_evaluate_sweep(
+    samples::FTLMSamples{Float64},
+    betas::AbstractVector{<:Real}
+)::FTLMSweepResult{Float64}
+    nb = length(betas)
+    beta_arr = Vector{Float64}(betas)
+
+    res_c = Ref{FTLMSweepResultFP64C}()
+    status = ccall(
+        (:qkrylov_ftlm_evaluate_sweep_fp64, libqkrylov),
+        Cint,
+        (Ptr{Cvoid}, Ptr{Cdouble}, Cint, Ref{FTLMSweepResultFP64C}),
+        samples.ptr, pointer(beta_arr), Cint(nb), res_c
+    )
+    _check_status(status, "FTLM evaluate sweep failed")
+
+    raw = res_c[]
+    n_obs = Int(raw.num_observables)
+    b_grid = copy(unsafe_wrap(Array, raw.beta_grid, nb))
+    z_arr  = copy(unsafe_wrap(Array, raw.partition_functions, nb))
+    f_arr  = copy(unsafe_wrap(Array, raw.free_energies, nb))
+    e_arr  = copy(unsafe_wrap(Array, raw.internal_energies, nb))
+    cv_arr = copy(unsafe_wrap(Array, raw.specific_heats, nb))
+    s_arr  = copy(unsafe_wrap(Array, raw.entropies, nb))
+
+    obs_exp = Vector{Vector{Float64}}(undef, n_obs)
+    obs_err = Vector{Vector{Float64}}(undef, n_obs)
+    if n_obs > 0
+        raw_obs = unsafe_wrap(Array, raw.observable_expectations, (nb, n_obs))
+        raw_err = unsafe_wrap(Array, raw.observable_errors, (nb, n_obs))
+        for oi in 1:n_obs
+            obs_exp[oi] = copy(raw_obs[:, oi])
+            obs_err[oi] = copy(raw_err[:, oi])
+        end
+    end
+
+    ccall((:qkrylov_ftlm_sweep_result_free_fp64, libqkrylov), Cvoid, (Ref{FTLMSweepResultFP64C},), res_c)
+
+    return FTLMSweepResult{Float64}(b_grid, z_arr, f_arr, e_arr, cv_arr, s_arr, obs_exp, obs_err)
+end
+
+function ftlm_evaluate_sweep(
+    samples::FTLMSamples{Float32},
+    betas::AbstractVector{<:Real}
+)::FTLMSweepResult{Float32}
+    nb = length(betas)
+    beta_arr = Vector{Float32}(betas)
+
+    res_c = Ref{FTLMSweepResultFP32C}()
+    status = ccall(
+        (:qkrylov_ftlm_evaluate_sweep_fp32, libqkrylov),
+        Cint,
+        (Ptr{Cvoid}, Ptr{Cfloat}, Cint, Ref{FTLMSweepResultFP32C}),
+        samples.ptr, pointer(beta_arr), Cint(nb), res_c
+    )
+    _check_status(status, "FTLM evaluate sweep failed")
+
+    raw = res_c[]
+    n_obs = Int(raw.num_observables)
+    b_grid = copy(unsafe_wrap(Array, raw.beta_grid, nb))
+    z_arr  = copy(unsafe_wrap(Array, raw.partition_functions, nb))
+    f_arr  = copy(unsafe_wrap(Array, raw.free_energies, nb))
+    e_arr  = copy(unsafe_wrap(Array, raw.internal_energies, nb))
+    cv_arr = copy(unsafe_wrap(Array, raw.specific_heats, nb))
+    s_arr  = copy(unsafe_wrap(Array, raw.entropies, nb))
+
+    obs_exp = Vector{Vector{Float32}}(undef, n_obs)
+    obs_err = Vector{Vector{Float32}}(undef, n_obs)
+    if n_obs > 0
+        raw_obs = unsafe_wrap(Array, raw.observable_expectations, (nb, n_obs))
+        raw_err = unsafe_wrap(Array, raw.observable_errors, (nb, n_obs))
+        for oi in 1:n_obs
+            obs_exp[oi] = copy(raw_obs[:, oi])
+            obs_err[oi] = copy(raw_err[:, oi])
+        end
+    end
+
+    ccall((:qkrylov_ftlm_sweep_result_free_fp32, libqkrylov), Cvoid, (Ref{FTLMSweepResultFP32C},), res_c)
+
+    return FTLMSweepResult{Float32}(b_grid, z_arr, f_arr, e_arr, cv_arr, s_arr, obs_exp, obs_err)
+end
+
+ftlm_evaluate_sweep(samples::FTLMSamples, beta::Real) = ftlm_evaluate_sweep(samples, [beta])
+
+# SciML interface extension for FTLMSamples
+solve(prob::ThermalProblem, samples::FTLMSamples; kwargs...) = ftlm_evaluate_sweep(samples, prob.betas)
+
 # Correction Vector Spectroscopy Solver
 struct CorrectionVectorResult{T<:Real}
     spectral_function::T

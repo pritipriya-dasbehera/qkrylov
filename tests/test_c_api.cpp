@@ -395,6 +395,31 @@ int main() {
     assert(sweep_res64.num_observables == 1);
     assert(sweep_res64.partition_functions[0] > 0.0);
     assert(std::abs(sweep_res64.observable_expectations[0] - sweep_res64.internal_energies[0]) < 1e-4);
+
+    // Test Decoupled FTLM (Stage 1 Sampling + Stage 2 Evaluation) (FP64)
+    qkrylov_ftlm_samples_h samples64 = nullptr;
+    int sample_status64 = qkrylov_ftlm_sample_fp64(H, obs_arr, 1, 20, 10, 42, &samples64);
+    assert(sample_status64 == QKRYLOV_SUCCESS);
+    assert(samples64 != nullptr);
+    assert(qkrylov_ftlm_samples_precision(samples64) == 1);
+
+    qkrylov_ftlm_sweep_result_fp64_t decoupled_res64;
+    int eval_status64 = qkrylov_ftlm_evaluate_sweep_fp64(samples64, betas_sweep, 3, &decoupled_res64);
+    assert(eval_status64 == QKRYLOV_SUCCESS);
+    assert(decoupled_res64.num_betas == 3);
+    assert(std::abs(decoupled_res64.partition_functions[0] - sweep_res64.partition_functions[0]) < 1e-10);
+    assert(std::abs(decoupled_res64.internal_energies[0] - sweep_res64.internal_energies[0]) < 1e-10);
+    qkrylov_ftlm_sweep_result_free_fp64(&decoupled_res64);
+
+    // Test zero-cost re-evaluation on different beta grid with same samples
+    double betas_sweep2[2] = {0.1, 0.8};
+    qkrylov_ftlm_sweep_result_fp64_t decoupled_res64_2;
+    assert(qkrylov_ftlm_evaluate_sweep_fp64(samples64, betas_sweep2, 2, &decoupled_res64_2) == QKRYLOV_SUCCESS);
+    assert(decoupled_res64_2.num_betas == 2);
+    qkrylov_ftlm_sweep_result_free_fp64(&decoupled_res64_2);
+
+    qkrylov_ftlm_samples_destroy(samples64);
+
     qkrylov_ftlm_sweep_result_free_fp64(&sweep_res64);
 
     // =========================================================================
@@ -463,6 +488,27 @@ int main() {
     assert(sweep_res32.num_betas == 2);
     assert(sweep_res32.num_observables == 1);
     assert(sweep_res32.partition_functions[0] > 0.0f);
+
+    // Test Decoupled FTLM (FP32)
+    qkrylov_ftlm_samples_h samples32 = nullptr;
+    int sample_status32 = qkrylov_ftlm_sample_fp32(H32, obs_arr32, 1, 20, 10, 42, &samples32);
+    assert(sample_status32 == QKRYLOV_SUCCESS);
+    assert(samples32 != nullptr);
+    assert(qkrylov_ftlm_samples_precision(samples32) == 0);
+
+    qkrylov_ftlm_sweep_result_fp32_t decoupled_res32;
+    int eval_status32 = qkrylov_ftlm_evaluate_sweep_fp32(samples32, betas_sweep32, 2, &decoupled_res32);
+    assert(eval_status32 == QKRYLOV_SUCCESS);
+    assert(decoupled_res32.num_betas == 2);
+    assert(std::abs(decoupled_res32.partition_functions[0] - sweep_res32.partition_functions[0]) < 1e-5f);
+    qkrylov_ftlm_sweep_result_free_fp32(&decoupled_res32);
+
+    // Test precision mismatch protection
+    qkrylov_ftlm_sweep_result_fp64_t mismatched_res64;
+    assert(qkrylov_ftlm_evaluate_sweep_fp64(samples32, betas_sweep, 3, &mismatched_res64) == QKRYLOV_ERROR_INVALID_ARG);
+
+    qkrylov_ftlm_samples_destroy(samples32);
+
     qkrylov_ftlm_sweep_result_free_fp32(&sweep_res32);
 
     // Cleanup Hamiltonians

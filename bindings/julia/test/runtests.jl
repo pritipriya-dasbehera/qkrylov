@@ -378,6 +378,36 @@ using QuantumKrylov
         @test isapprox(sweep_res.observable_expectations[1], sweep_res.internal_energies, rtol=1e-4)
         @test length(sweep_res.observable_errors) == 1
         @test all(sweep_res.observable_errors[1] .>= 0.0)
+
+        # Decoupled FTLM testing (Float64)
+        samples = ftlm_sample(H; observables=[H], n_random=10, n_steps=20, seed=123)
+        @test samples isa FTLMSamples{Float64}
+        @test samples.precision === Float64
+
+        decoupled_res = ftlm_evaluate_sweep(samples, [0.5, 1.0, 2.0])
+        @test decoupled_res isa FTLMSweepResult{Float64}
+        @test isapprox(decoupled_res.partition_functions, sweep_res.partition_functions, rtol=1e-10)
+        @test isapprox(decoupled_res.internal_energies, sweep_res.internal_energies, rtol=1e-10)
+
+        # Zero-cost re-evaluation on different beta grid
+        decoupled_res2 = ftlm_evaluate_sweep(samples, [0.1, 0.8, 1.5, 3.0])
+        @test length(decoupled_res2.beta_grid) == 4
+        @test all(decoupled_res2.partition_functions .> 0.0)
+
+        # SciML interface with FTLMSamples
+        th_prob_samples = ThermalProblem(H, [0.5, 1.0, 2.0])
+        sciml_sweep = solve(th_prob_samples, samples)
+        @test sciml_sweep isa FTLMSweepResult{Float64}
+        @test isapprox(sciml_sweep.internal_energies, sweep_res.internal_energies, rtol=1e-10)
+
+        # Decoupled FTLM testing (Float32)
+        H32 = MatrixFreeHamiltonian{Float32}(basis, site, op)
+        samples32 = ftlm_sample(H32; observables=[H32], n_random=10, n_steps=20, seed=123)
+        @test samples32 isa FTLMSamples{Float32}
+        @test samples32.precision === Float32
+        decoupled_res32 = ftlm_evaluate_sweep(samples32, [0.5, 1.0, 2.0])
+        @test decoupled_res32 isa FTLMSweepResult{Float32}
+        @test length(decoupled_res32.beta_grid) == 3
     end
 
     @testset "Device & Hardware Query API" begin

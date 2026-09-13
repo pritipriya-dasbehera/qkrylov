@@ -886,6 +886,146 @@ int SUFFIX(qkrylov_ftlm)(
     }
 }
 
+static void copy_ftlm_sweep_result(const FTLMSweepResult& sweep, int num_betas, int num_observables, FTLMSweepResT* result) {
+    result->num_betas = num_betas;
+    result->num_observables = num_observables;
+
+    auto* out_betas = new Scalar[num_betas];
+    auto* out_z = new Scalar[num_betas];
+    auto* out_f = new Scalar[num_betas];
+    auto* out_e = new Scalar[num_betas];
+    auto* out_cv = new Scalar[num_betas];
+    auto* out_s = new Scalar[num_betas];
+    for (int bi = 0; bi < num_betas; ++bi) {
+        out_betas[bi] = static_cast<Scalar>(sweep.beta_grid[bi]);
+        out_z[bi] = static_cast<Scalar>(sweep.partition_functions[bi]);
+        out_f[bi] = static_cast<Scalar>(sweep.free_energies[bi]);
+        out_e[bi] = static_cast<Scalar>(sweep.internal_energies[bi]);
+        out_cv[bi] = static_cast<Scalar>(sweep.specific_heats[bi]);
+        out_s[bi] = static_cast<Scalar>(sweep.entropies[bi]);
+    }
+    result->beta_grid = out_betas;
+    result->partition_functions = out_z;
+    result->free_energies = out_f;
+    result->internal_energies = out_e;
+    result->specific_heats = out_cv;
+    result->entropies = out_s;
+
+    if (num_observables > 0) {
+        auto* out_obs = new Scalar[num_observables * num_betas];
+        auto* out_err = new Scalar[num_observables * num_betas];
+        for (int oi = 0; oi < num_observables; ++oi) {
+            for (int bi = 0; bi < num_betas; ++bi) {
+                out_obs[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_expectations[oi][bi]);
+                out_err[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_errors[oi][bi]);
+            }
+        }
+        result->observable_expectations = out_obs;
+        result->observable_errors = out_err;
+    } else {
+        result->observable_expectations = nullptr;
+        result->observable_errors = nullptr;
+    }
+}
+
+int SUFFIX(qkrylov_ftlm_sample)(
+    qkrylov_hamiltonian_h h,
+    const qkrylov_hamiltonian_h* observables,
+    int num_observables,
+    int n_random,
+    int n_steps,
+    uint64_t seed,
+    qkrylov_ftlm_samples_h* out_samples)
+{
+    if (!h) {
+        set_last_error("qkrylov_ftlm_sample: hamiltonian handle is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (h->precision != PREC_ID) {
+        set_last_error("qkrylov_ftlm_sample: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (!h->impl || !out_samples) {
+        set_last_error("qkrylov_ftlm_sample: null pointer argument");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (n_random <= 0 || n_steps <= 0) {
+        set_last_error("qkrylov_ftlm_sample: n_random and n_steps must be positive");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (num_observables > 0 && !observables) {
+        set_last_error("qkrylov_ftlm_sample: observables array is null but num_observables > 0");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+
+    try {
+        auto* H = static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(h->impl.get());
+
+        std::vector<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>> obs_vec;
+        obs_vec.reserve(num_observables);
+        for (int i = 0; i < num_observables; ++i) {
+            if (!observables[i] || observables[i]->precision != PREC_ID || !observables[i]->impl) {
+                set_last_error("qkrylov_ftlm_sample: invalid observable handle");
+                return QKRYLOV_ERROR_INVALID_ARG;
+            }
+            obs_vec.push_back(*static_cast<MatrixFreeHamiltonian<Kokkos::DefaultExecutionSpace>*>(observables[i]->impl.get()));
+        }
+
+        auto samples = ftlm_sample<Kokkos::DefaultExecutionSpace>(*H, obs_vec, n_random, n_steps, seed);
+
+        auto handle = new qkrylov_ftlm_samples_t();
+        handle->precision = PREC_ID;
+        handle->impl = std::make_shared<std::vector<FTLMKrylovSample>>(std::move(samples));
+        *out_samples = handle;
+
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_ftlm_sample");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
+int SUFFIX(qkrylov_ftlm_evaluate_sweep)(
+    qkrylov_ftlm_samples_h samples,
+    const Scalar* beta_grid,
+    int num_betas,
+    FTLMSweepResT* result)
+{
+    if (!samples) {
+        set_last_error("qkrylov_ftlm_evaluate_sweep: samples handle is null");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (samples->precision != PREC_ID) {
+        set_last_error("qkrylov_ftlm_evaluate_sweep: precision mismatch");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+    if (!samples->impl || !beta_grid || num_betas <= 0 || !result) {
+        set_last_error("qkrylov_ftlm_evaluate_sweep: null pointer or invalid beta_grid");
+        return QKRYLOV_ERROR_INVALID_ARG;
+    }
+
+    try {
+        auto* sample_vec = static_cast<std::vector<FTLMKrylovSample>*>(samples->impl.get());
+        std::vector<Real> betas(num_betas);
+        for (int i = 0; i < num_betas; ++i) betas[i] = static_cast<Real>(beta_grid[i]);
+
+        auto sweep = ftlm_evaluate_sweep(*sample_vec, betas);
+        int num_obs = static_cast<int>(sweep.observable_expectations.size());
+        copy_ftlm_sweep_result(sweep, num_betas, num_obs, result);
+
+        return QKRYLOV_SUCCESS;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return QKRYLOV_ERROR_EXCEPTION;
+    } catch (...) {
+        set_last_error("Unknown exception in qkrylov_ftlm_evaluate_sweep");
+        return QKRYLOV_ERROR_EXCEPTION;
+    }
+}
+
 int SUFFIX(qkrylov_ftlm_sweep)(
     qkrylov_hamiltonian_h h,
     const Scalar* beta_grid,
@@ -935,45 +1075,7 @@ int SUFFIX(qkrylov_ftlm_sweep)(
 
         auto sweep = ftlm_sweep<Kokkos::DefaultExecutionSpace>(*H, betas, obs_vec, n_random, n_steps, seed);
 
-        result->num_betas = num_betas;
-        result->num_observables = num_observables;
-
-        auto* out_betas = new Scalar[num_betas];
-        auto* out_z = new Scalar[num_betas];
-        auto* out_f = new Scalar[num_betas];
-        auto* out_e = new Scalar[num_betas];
-        auto* out_cv = new Scalar[num_betas];
-        auto* out_s = new Scalar[num_betas];
-        for (int bi = 0; bi < num_betas; ++bi) {
-            out_betas[bi] = static_cast<Scalar>(sweep.beta_grid[bi]);
-            out_z[bi] = static_cast<Scalar>(sweep.partition_functions[bi]);
-            out_f[bi] = static_cast<Scalar>(sweep.free_energies[bi]);
-            out_e[bi] = static_cast<Scalar>(sweep.internal_energies[bi]);
-            out_cv[bi] = static_cast<Scalar>(sweep.specific_heats[bi]);
-            out_s[bi] = static_cast<Scalar>(sweep.entropies[bi]);
-        }
-        result->beta_grid = out_betas;
-        result->partition_functions = out_z;
-        result->free_energies = out_f;
-        result->internal_energies = out_e;
-        result->specific_heats = out_cv;
-        result->entropies = out_s;
-
-        if (num_observables > 0) {
-            auto* out_obs = new Scalar[num_observables * num_betas];
-            auto* out_err = new Scalar[num_observables * num_betas];
-            for (int oi = 0; oi < num_observables; ++oi) {
-                for (int bi = 0; bi < num_betas; ++bi) {
-                    out_obs[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_expectations[oi][bi]);
-                    out_err[oi * num_betas + bi] = static_cast<Scalar>(sweep.observable_errors[oi][bi]);
-                }
-            }
-            result->observable_expectations = out_obs;
-            result->observable_errors = out_err;
-        } else {
-            result->observable_expectations = nullptr;
-            result->observable_errors = nullptr;
-        }
+        copy_ftlm_sweep_result(sweep, num_betas, num_observables, result);
 
         return QKRYLOV_SUCCESS;
     } catch (const std::exception& e) {

@@ -65,3 +65,9 @@ struct qkrylov_device_vector_t {
     uint64_t dim = 0;
     std::shared_ptr<void> impl;
 };
+
+struct qkrylov_ftlm_samples_t {
+    int precision = 1; // 0 = FP32, 1 = FP64
+    std::shared_ptr<void> impl;
+};
+

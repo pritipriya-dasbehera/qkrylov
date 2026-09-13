@@ -510,9 +510,19 @@ void qkrylov_ftlm_sweep_result_free_fp64(qkrylov_ftlm_sweep_result_fp64_t* resul
 int  qkrylov_ftlm_sweep(qkrylov_hamiltonian_h h, const double* beta_grid, int num_betas, const qkrylov_hamiltonian_h* observables, int num_observables, int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_sweep_result_c_t* result);
 void qkrylov_ftlm_sweep_result_free(qkrylov_ftlm_sweep_result_c_t* result);
 
+/* Decoupled Workflow (Stage 1 Sampling + Stage 2 Evaluation) */
+int  qkrylov_ftlm_sample_fp64(qkrylov_hamiltonian_h h, const qkrylov_hamiltonian_h* observables, int num_observables, int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_samples_h* out_samples);
+int  qkrylov_ftlm_evaluate_sweep_fp64(qkrylov_ftlm_samples_h samples, const double* beta_grid, int num_betas, qkrylov_ftlm_sweep_result_fp64_t* result);
+int  qkrylov_ftlm_sample(qkrylov_hamiltonian_h h, const qkrylov_hamiltonian_h* observables, int num_observables, int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_samples_h* out_samples);
+int  qkrylov_ftlm_evaluate_sweep(qkrylov_ftlm_samples_h samples, const double* beta_grid, int num_betas, qkrylov_ftlm_sweep_result_c_t* result);
+void qkrylov_ftlm_samples_destroy(qkrylov_ftlm_samples_h samples);
+int  qkrylov_ftlm_samples_precision(qkrylov_ftlm_samples_h samples);
+
 /* FP32 Endpoints */
 int  qkrylov_ftlm_sweep_fp32(qkrylov_hamiltonian_h h, const float* beta_grid, int num_betas, const qkrylov_hamiltonian_h* observables, int num_observables, int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_sweep_result_fp32_t* result);
 void qkrylov_ftlm_sweep_result_free_fp32(qkrylov_ftlm_sweep_result_fp32_t* result);
+int  qkrylov_ftlm_sample_fp32(qkrylov_hamiltonian_h h, const qkrylov_hamiltonian_h* observables, int num_observables, int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_samples_h* out_samples);
+int  qkrylov_ftlm_evaluate_sweep_fp32(qkrylov_ftlm_samples_h samples, const float* beta_grid, int num_betas, qkrylov_ftlm_sweep_result_fp32_t* result);
 ```
 
 ### Vector Operations (Kokkos Parallel BLAS-1 Kernels)

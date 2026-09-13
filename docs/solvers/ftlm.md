@@ -90,6 +90,11 @@ For every temperature $\beta$ on the grid, `qkrylov` computes:
     for (i, b) in enumerate(sweep.beta_grid)
         println("beta = $b | E = $(sweep.internal_energies[i]) | Cv = $(sweep.specific_heats[i]) | <SzSz> = $(sweep.observable_expectations[1][i]) +/- $(sweep.observable_errors[1][i])")
     end
+
+    # 4. Decoupled Workflow (Zero SpMV Re-evaluation)
+    samples = ftlm_sample(H; observables=[Sz01], n_random=20, n_steps=50, seed=42)
+    sweep_dense = ftlm_evaluate_sweep(samples, 0.1:0.05:10.0) # Zero additional SpMVs!
+    sweep_sciml = solve(ThermalProblem(H, 1.0:0.5:20.0), samples)
     ```
 
 === "Python"
@@ -122,6 +127,11 @@ For every temperature $\beta$ on the grid, `qkrylov` computes:
     print("Heat capacities:", res.specific_heats)
     print("<Sz0 Sz1> expectation:", res.observable_expectations[0])
     print("<Sz0 Sz1> error bars:", res.observable_errors[0])
+
+    # 4. Decoupled Workflow (Zero SpMV Re-evaluation)
+    samples = solver.sample(H, observables=[Sz01])
+    # Re-evaluate anywhere instantly with zero SpMVs:
+    res_dense = samples.evaluate_sweep(np.linspace(0.1, 10.0, 100))
     ```
 
 === "C++"

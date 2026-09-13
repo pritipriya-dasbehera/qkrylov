@@ -350,6 +350,35 @@ class FTLMSweepResult:
         )
 
 
+class FTLMSamples:
+    """Opaque handle holding stochastically generated Krylov subspace samples.
+
+    Allows zero-cost re-evaluation of thermodynamic properties and observables
+    across arbitrary temperature grids without repeating SpMV products.
+    """
+    def __init__(self, cpp_obj, backend_suffix: str, s_dtype: str):
+        self._cpp_obj = cpp_obj
+        self._backend_suffix = backend_suffix
+        self._s_dtype = s_dtype
+
+    def __len__(self) -> int:
+        return len(self._cpp_obj)
+
+    @property
+    def num_samples(self) -> int:
+        return self._cpp_obj.num_samples
+
+    def evaluate_sweep(self, betas: Union[float, Sequence[float]]) -> FTLMSweepResult:
+        """Evaluate thermodynamic sweep on temperature grid betas with zero SpMV cost."""
+        fn = getattr(_cpp, f"ftlm_evaluate_sweep_{self._backend_suffix}{self._s_dtype}")
+        b_list = [float(betas)] if isinstance(betas, (int, float)) else [float(b) for b in betas]
+        res = fn(self._cpp_obj, b_list)
+        return FTLMSweepResult(res)
+
+    def __repr__(self) -> str:
+        return f"FTLMSamples(num_samples={len(self)})"
+
+
 class FTLM(Solver):
     """Finite-Temperature Lanczos Method (FTLM) solver.
 
@@ -389,6 +418,26 @@ class FTLM(Solver):
             res = fn(H._cpp_obj, self.beta, self.n_random, self.n_steps)
             return FTLMResult(res)
 
+    def sample(
+        self,
+        H: MatrixFreeHamiltonian,
+        observables: Optional[Sequence[MatrixFreeHamiltonian]] = None
+    ) -> FTLMSamples:
+        """Stage 1: Generate Krylov subspace samples and project observables."""
+        s_dtype = "_FP64" if getattr(H, "dtype", np.float32) == np.float64 else "_FP32"
+        fn = getattr(_cpp, f"ftlm_sample_{H._backend_suffix}{s_dtype}")
+        obs_cpp = [obs._cpp_obj for obs in (observables or [])]
+        cpp_samples = fn(H._cpp_obj, obs_cpp, self.n_random, self.n_steps, self.seed)
+        return FTLMSamples(cpp_samples, H._backend_suffix, s_dtype)
+
+    def evaluate_sweep(
+        self,
+        samples: FTLMSamples,
+        betas: Union[float, Sequence[float]]
+    ) -> FTLMSweepResult:
+        """Stage 2: Evaluate thermodynamic sweep on temperature grid betas with zero SpMV cost."""
+        return samples.evaluate_sweep(betas)
+
 
 def ftlm(
     H: MatrixFreeHamiltonian,
@@ -403,6 +452,26 @@ def ftlm(
     return FTLM(beta=beta, n_random=n_random, n_steps=n_steps, seed=seed).solve(
         H, betas=betas, observables=observables
     )
+
+
+def ftlm_sample(
+    H: MatrixFreeHamiltonian,
+    observables: Optional[Sequence[MatrixFreeHamiltonian]] = None,
+    n_random: int = 50,
+    n_steps: int = 100,
+    seed: int = 42
+) -> FTLMSamples:
+    """Stage 1: Generate Krylov subspace samples and project observables."""
+    return FTLM(n_random=n_random, n_steps=n_steps, seed=seed).sample(H, observables=observables)
+
+
+def ftlm_evaluate_sweep(
+    samples: FTLMSamples,
+    betas: Union[float, Sequence[float]]
+) -> FTLMSweepResult:
+    """Stage 2: Evaluate thermodynamic sweep on temperature grid betas with zero SpMV cost."""
+    return samples.evaluate_sweep(betas)
+
 
 
 @dataclass
