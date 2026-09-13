@@ -378,9 +378,44 @@ int qkrylov_lanczos_ground_state_fp32(qkrylov_hamiltonian_h h, int maxiter, floa
 int qkrylov_lanczos_ground_state_complex_fp32(qkrylov_hamiltonian_h h, int maxiter, float tol, qkrylov_lanczos_result_fp32_t* result, float* eigenvector_complex);
 ```
 
+#### `qkrylov_lanczos_two_pass_ground_state` & `_complex`
+Computes the ground state eigenvalue and eigenvector using a memory-frugal two-pass approach. In the first pass, tridiagonal coefficients are generated using only 3 working vectors. In the second pass, the Ritz eigenvector is reconstructed on-the-fly, eliminating the requirement to store all $M$ Krylov vectors in memory.
+```c
+/* FP64 Endpoints */
+int qkrylov_lanczos_two_pass_ground_state_fp64(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_fp64_t* result);
+int qkrylov_lanczos_two_pass_ground_state_complex_fp64(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_fp64_t* result, double* eigenvector_complex);
+int qkrylov_lanczos_two_pass_ground_state(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_c_t* result);
+int qkrylov_lanczos_two_pass_ground_state_complex(qkrylov_hamiltonian_h h, int maxiter, double tol, qkrylov_lanczos_result_c_t* result, double* eigenvector_complex);
+
+/* FP32 Endpoints */
+int qkrylov_lanczos_two_pass_ground_state_fp32(qkrylov_hamiltonian_h h, int maxiter, float tol, qkrylov_lanczos_result_fp32_t* result);
+int qkrylov_lanczos_two_pass_ground_state_complex_fp32(qkrylov_hamiltonian_h h, int maxiter, float tol, qkrylov_lanczos_result_fp32_t* result, float* eigenvector_complex);
+```
+
+#### `qkrylov_lanczos_lowest_complex`
+Computes the lowest $k$ eigenvalues and eigenvectors using thick-restart or full-subspace Lanczos iteration.
+```c
+typedef struct {
+    int iterations;
+    int converged;
+} qkrylov_lanczos_lowest_result_c_t;
+
+/* FP64 Endpoints */
+int qkrylov_lanczos_lowest_complex_fp64(qkrylov_hamiltonian_h h, int n_eig, int maxiter, double tol, double* eigenvalues_out, double* eigenvectors_complex_out, qkrylov_lanczos_lowest_result_c_t* result_info, const double* initial_vector_complex);
+int qkrylov_lanczos_lowest_complex(qkrylov_hamiltonian_h h, int n_eig, int maxiter, double tol, double* eigenvalues_out, double* eigenvectors_complex_out, qkrylov_lanczos_lowest_result_c_t* result_info, const double* initial_vector_complex);
+
+/* FP32 Endpoints */
+int qkrylov_lanczos_lowest_complex_fp32(qkrylov_hamiltonian_h h, int n_eig, int maxiter, float tol, float* eigenvalues_out, float* eigenvectors_complex_out, qkrylov_lanczos_lowest_result_c_t* result_info, const float* initial_vector_complex);
+```
+
 #### `qkrylov_davidson_lowest_complex`
 ```c
-/* Subspace Davidson */
+typedef struct {
+    int iterations;
+    int converged;
+} qkrylov_davidson_result_c_t;
+
+/* Subspace Davidson with Diagonal Preconditioning */
 int qkrylov_davidson_lowest_complex_fp64(qkrylov_hamiltonian_h h, int n_eig, int max_subspace, double tol, double* eigenvalues_out, double* eigenvectors_complex_out, qkrylov_davidson_result_c_t* result_info);
 int qkrylov_davidson_lowest_complex_fp32(qkrylov_hamiltonian_h h, int n_eig, int max_subspace, float tol, float* eigenvalues_out, float* eigenvectors_complex_out, qkrylov_davidson_result_c_t* result_info);
 int qkrylov_davidson_lowest_complex(qkrylov_hamiltonian_h h, int n_eig, int max_subspace, double tol, double* eigenvalues_out, double* eigenvectors_complex_out, qkrylov_davidson_result_c_t* result_info);
@@ -395,13 +430,6 @@ int    qkrylov_continued_fraction_coeffs_complex(qkrylov_hamiltonian_h h, const 
 double qkrylov_evaluate_spectral_function_fp64(const double* alphas, const double* betas, size_t n, double norm_phi0, double omega, double E0, double eta);
 float  qkrylov_evaluate_spectral_function_fp32(const float* alphas, const float* betas, size_t n, float norm_phi0, float omega, float E0, float eta);
 double qkrylov_evaluate_spectral_function(const double* alphas, const double* betas, size_t n, double norm_phi0, double omega, double E0, double eta);
-```
-
-#### `qkrylov_ftlm`
-```c
-int qkrylov_ftlm_fp64(qkrylov_hamiltonian_h h, double beta, int n_random, int n_steps, qkrylov_ftlm_result_fp64_t* result);
-int qkrylov_ftlm_fp32(qkrylov_hamiltonian_h h, float beta, int n_random, int n_steps, qkrylov_ftlm_result_fp32_t* result);
-int qkrylov_ftlm(qkrylov_hamiltonian_h h, double beta, int n_random, int n_steps, qkrylov_ftlm_result_c_t* result);
 ```
 
 #### `qkrylov_solver_correction_vector`
@@ -422,6 +450,69 @@ typedef struct {
 int qkrylov_solver_correction_vector_fp64(qkrylov_hamiltonian_h h, const double* op_psi0_complex, double e0, double omega, double eta, int max_iter, double tol, qkrylov_correction_vector_result_fp64_t* result, double* correction_vector_out_complex);
 int qkrylov_solver_correction_vector_fp32(qkrylov_hamiltonian_h h, const float* op_psi0_complex, float e0, float omega, float eta, int max_iter, float tol, qkrylov_correction_vector_result_fp32_t* result, float* correction_vector_out_complex);
 int qkrylov_solver_correction_vector(qkrylov_hamiltonian_h h, const double* op_psi0_complex, double e0, double omega, double eta, int max_iter, double tol, qkrylov_correction_vector_result_c_t* result, double* correction_vector_out_complex);
+```
+
+#### `qkrylov_ftlm` (Single Temperature)
+```c
+typedef struct {
+    double beta;
+    double partition_function;
+    double internal_energy;
+    double specific_heat;
+} qkrylov_ftlm_result_fp64_t;
+typedef qkrylov_ftlm_result_fp64_t qkrylov_ftlm_result_c_t;
+
+typedef struct {
+    float beta;
+    float partition_function;
+    float internal_energy;
+    float specific_heat;
+} qkrylov_ftlm_result_fp32_t;
+
+int qkrylov_ftlm_fp64(qkrylov_hamiltonian_h h, double beta, int n_random, int n_steps, qkrylov_ftlm_result_fp64_t* result);
+int qkrylov_ftlm_fp32(qkrylov_hamiltonian_h h, float beta, int n_random, int n_steps, qkrylov_ftlm_result_fp32_t* result);
+int qkrylov_ftlm(qkrylov_hamiltonian_h h, double beta, int n_random, int n_steps, qkrylov_ftlm_result_c_t* result);
+```
+
+#### `qkrylov_ftlm_sweep` (Multi-Temperature & Observables Sweep)
+Evaluates thermodynamic equations of state ($Z, F, E, C_v, S$) and arbitrary physical observables $\langle \hat{O}_m \rangle$ across a user-specified $\beta$ grid in a single pass without re-running Krylov iterations.
+```c
+typedef struct {
+    int num_betas;
+    int num_observables;
+    const double* beta_grid;
+    const double* partition_functions;
+    const double* free_energies;
+    const double* internal_energies;
+    const double* specific_heats;
+    const double* entropies;
+    const double* observable_expectations; /* Row-major: num_observables x num_betas */
+    const double* observable_errors;       /* Row-major: num_observables x num_betas */
+} qkrylov_ftlm_sweep_result_fp64_t;
+typedef qkrylov_ftlm_sweep_result_fp64_t qkrylov_ftlm_sweep_result_c_t;
+
+typedef struct {
+    int num_betas;
+    int num_observables;
+    const float* beta_grid;
+    const float* partition_functions;
+    const float* free_energies;
+    const float* internal_energies;
+    const float* specific_heats;
+    const float* entropies;
+    const float* observable_expectations; /* Row-major: num_observables x num_betas */
+    const float* observable_errors;       /* Row-major: num_observables x num_betas */
+} qkrylov_ftlm_sweep_result_fp32_t;
+
+/* FP64 Endpoints */
+int  qkrylov_ftlm_sweep_fp64(qkrylov_hamiltonian_h h, const double* beta_grid, int num_betas, const qkrylov_hamiltonian_h* observables, int num_observables, int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_sweep_result_fp64_t* result);
+void qkrylov_ftlm_sweep_result_free_fp64(qkrylov_ftlm_sweep_result_fp64_t* result);
+int  qkrylov_ftlm_sweep(qkrylov_hamiltonian_h h, const double* beta_grid, int num_betas, const qkrylov_hamiltonian_h* observables, int num_observables, int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_sweep_result_c_t* result);
+void qkrylov_ftlm_sweep_result_free(qkrylov_ftlm_sweep_result_c_t* result);
+
+/* FP32 Endpoints */
+int  qkrylov_ftlm_sweep_fp32(qkrylov_hamiltonian_h h, const float* beta_grid, int num_betas, const qkrylov_hamiltonian_h* observables, int num_observables, int n_random, int n_steps, uint64_t seed, qkrylov_ftlm_sweep_result_fp32_t* result);
+void qkrylov_ftlm_sweep_result_free_fp32(qkrylov_ftlm_sweep_result_fp32_t* result);
 ```
 
 ### Vector Operations (Kokkos Parallel BLAS-1 Kernels)
