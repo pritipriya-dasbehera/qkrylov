@@ -26,7 +26,7 @@ export MatrixFreeHamiltonian, diagonal, diagonal_device
 export DeviceVector, mul!
 export solve
 export AbstractQuantumProblem, GroundStateProblem, ExcitedStatesProblem, ThermalProblem, DynamicsProblem, SpectralProblem
-export AbstractQuantumAlgorithm, AbstractLanczosVariation, SinglePass, TwoPass
+export AbstractQuantumAlgorithm, AbstractLanczosVariation, OnePass, TwoPass, OnePass_DKGS
 export Lanczos, Davidson, FTLM, ContinuedFraction, CorrectionVector
 export AbstractQuantumSolution, GroundStateSolution, LanczosResult, ExcitedStatesSolution
 export lanczos_ground_state, lanczos_lowest, LanczosLowestResult

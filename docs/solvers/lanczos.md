@@ -66,9 +66,9 @@ auto [energy, psi0, iterations, converged] = solvers::lanczos<solvers::policy::O
     H = MatrixFreeHamiltonian(basis, site, op)
 
     # 2. SciML Problem-Algorithm Interface
-    # Ground State with One-Pass (SinglePass)
+    # Ground State with One-Pass
     prob = GroundStateProblem(H)
-    sol = solve(prob, Lanczos(variation=SinglePass(), maxiter=100, tol=1e-12, return_state=true))
+    sol = solve(prob, Lanczos(variation=OnePass(), maxiter=100, tol=1e-12, return_state=true))
     println("Ground state energy: ", sol.energy)
     println("Wavefunction length: ", length(sol.eigenvector))
 

@@ -52,8 +52,12 @@ end
 abstract type AbstractQuantumAlgorithm end
 abstract type AbstractLanczosVariation end
 
-struct SinglePass <: AbstractLanczosVariation end
-struct TwoPass   <: AbstractLanczosVariation end
+struct OnePass <: AbstractLanczosVariation end
+struct TwoPass <: AbstractLanczosVariation end
+
+# C++ policy parity aliases
+const OnePass_DKGS = OnePass
+const OnePass_DGKS = OnePass
 
 struct Lanczos{V<:AbstractLanczosVariation} <: AbstractQuantumAlgorithm
     variation::V
@@ -63,7 +67,7 @@ struct Lanczos{V<:AbstractLanczosVariation} <: AbstractQuantumAlgorithm
 end
 
 function Lanczos(;
-    variation::AbstractLanczosVariation = SinglePass(),
+    variation::AbstractLanczosVariation = OnePass(),
     maxiter::Integer = 200,
     tol::Real = 1e-12,
     return_state::Bool = true,
@@ -242,7 +246,7 @@ function Base.show(io::IO, sol::GroundStateSolution{T}) where {T}
 end
 
 # Multiple Dispatch solve(prob, alg)
-function solve(prob::GroundStateProblem{<:MatrixFreeHamiltonian{Float64}}, alg::Lanczos{SinglePass}; kwargs...)
+function solve(prob::GroundStateProblem{<:MatrixFreeHamiltonian{Float64}}, alg::Lanczos{OnePass}; kwargs...)
     H = prob.H
     dim = Int(dimension(H))
     res_c = Ref{LanczosResultFP64C}(LanczosResultFP64C(0.0, 0, 0))
@@ -257,7 +261,7 @@ function solve(prob::GroundStateProblem{<:MatrixFreeHamiltonian{Float64}}, alg::
                 H.ptr, Cint(alg.maxiter), Cdouble(alg.tol), res_c, pointer(psi)
             )
         end
-        _check_status(status, "Lanczos single-pass ground state solver failed")
+        _check_status(status, "Lanczos one-pass ground state solver failed")
         return GroundStateSolution(res_c[].energy, psi, Int(res_c[].iterations), res_c[].converged != 0)
     else
         status = ccall(
@@ -266,12 +270,12 @@ function solve(prob::GroundStateProblem{<:MatrixFreeHamiltonian{Float64}}, alg::
             (Ptr{Cvoid}, Cint, Cdouble, Ref{LanczosResultFP64C}),
             H.ptr, Cint(alg.maxiter), Cdouble(alg.tol), res_c
         )
-        _check_status(status, "Lanczos single-pass ground state solver failed")
+        _check_status(status, "Lanczos one-pass ground state solver failed")
         return GroundStateSolution(res_c[].energy, nothing, Int(res_c[].iterations), res_c[].converged != 0)
     end
 end
 
-function solve(prob::GroundStateProblem{<:MatrixFreeHamiltonian{Float32}}, alg::Lanczos{SinglePass}; kwargs...)
+function solve(prob::GroundStateProblem{<:MatrixFreeHamiltonian{Float32}}, alg::Lanczos{OnePass}; kwargs...)
     H = prob.H
     dim = Int(dimension(H))
     res_c = Ref{LanczosResultFP32C}(LanczosResultFP32C(0.0f0, 0, 0))
@@ -286,7 +290,7 @@ function solve(prob::GroundStateProblem{<:MatrixFreeHamiltonian{Float32}}, alg::
                 H.ptr, Cint(alg.maxiter), Cfloat(alg.tol), res_c, pointer(psi)
             )
         end
-        _check_status(status, "Lanczos single-pass ground state solver failed")
+        _check_status(status, "Lanczos one-pass ground state solver failed")
         return GroundStateSolution(res_c[].energy, psi, Int(res_c[].iterations), res_c[].converged != 0)
     else
         status = ccall(
@@ -295,7 +299,7 @@ function solve(prob::GroundStateProblem{<:MatrixFreeHamiltonian{Float32}}, alg::
             (Ptr{Cvoid}, Cint, Cfloat, Ref{LanczosResultFP32C}),
             H.ptr, Cint(alg.maxiter), Cfloat(alg.tol), res_c
         )
-        _check_status(status, "Lanczos single-pass ground state solver failed")
+        _check_status(status, "Lanczos one-pass ground state solver failed")
         return GroundStateSolution(res_c[].energy, nothing, Int(res_c[].iterations), res_c[].converged != 0)
     end
 end
@@ -360,8 +364,20 @@ end
 
 solve(prob::GroundStateProblem; kwargs...) = solve(prob, Lanczos(); kwargs...)
 
-function solve(prob::ExcitedStatesProblem, alg::Lanczos; kwargs...)
+function solve(prob::ExcitedStatesProblem, alg::Lanczos{OnePass}; kwargs...)
     return lanczos_lowest(prob.H; n_eig=prob.n_eig, maxiter=alg.maxiter, tol=alg.tol, compute_eigenvectors=alg.return_state)
+end
+
+function solve(prob::ExcitedStatesProblem, alg::Lanczos{TwoPass}; kwargs...)
+    if prob.n_eig > 1
+        throw(ArgumentError(
+            "Selected Lanczos variation (TwoPass) only supports ground-state calculations (n_eig = 1). " *
+            "Use OnePass for an arbitrary number of low energy states."
+        ))
+    end
+    sol_gs = solve(GroundStateProblem(prob.H), alg; kwargs...)
+    evecs = sol_gs.state === nothing ? nothing : [sol_gs.state]
+    return ExcitedStatesSolution([sol_gs.energy], evecs, sol_gs.iterations, sol_gs.converged)
 end
 
 function solve(prob::ExcitedStatesProblem, alg::Davidson=Davidson(); kwargs...)
@@ -391,7 +407,7 @@ function lanczos_ground_state(
     return_state::Bool=false,
     compute_eigenvector::Bool=return_state
 )
-    return solve(GroundStateProblem(H), Lanczos(variation=SinglePass(), maxiter=maxiter, tol=tol, return_state=return_state || compute_eigenvector))
+    return solve(GroundStateProblem(H), Lanczos(variation=OnePass(), maxiter=maxiter, tol=tol, return_state=return_state || compute_eigenvector))
 end
 
 # Excited States Eigensolver Solutions (Davidson and Lanczos Lowest)

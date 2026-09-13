@@ -209,40 +209,40 @@ using QuantumKrylov
         @test prob isa AbstractQuantumProblem
         @test prob.H === H
 
-        # 1. SinglePass Lanczos
-        alg_sp = Lanczos(variation=SinglePass(), maxiter=50, tol=1e-12)
-        @test alg_sp isa AbstractQuantumAlgorithm
-        @test alg_sp.variation isa SinglePass
-        sol_sp = solve(prob, alg_sp)
-        @test sol_sp isa AbstractQuantumSolution
-        @test sol_sp isa GroundStateSolution
-        @test isapprox(sol_sp.value, -2.0, atol=1e-6)
-        @test isapprox(sol_sp.energy, -2.0, atol=1e-6)
-        @test sol_sp.converged == true
-        @test sol_sp.iterations > 0
-        @test length(sol_sp.u) == 16
-        @test length(sol_sp.state) == 16
-        @test length(sol_sp.eigenvector) == 16
-        @test sol_sp.u === sol_sp.eigenvector
-        @test isapprox(H * sol_sp.u, sol_sp.value .* sol_sp.u, atol=1e-5)
+        # 1. OnePass Lanczos (Default)
+        alg_op = Lanczos(variation=OnePass(), maxiter=50, tol=1e-12)
+        @test alg_op isa AbstractQuantumAlgorithm
+        @test alg_op.variation isa OnePass
+        sol_op = solve(prob, alg_op)
+        @test sol_op isa AbstractQuantumSolution
+        @test sol_op isa GroundStateSolution
+        @test isapprox(sol_op.value, -2.0, atol=1e-6)
+        @test isapprox(sol_op.energy, -2.0, atol=1e-6)
+        @test sol_op.converged == true
+        @test sol_op.iterations > 0
+        @test length(sol_op.u) == 16
+        @test length(sol_op.state) == 16
+        @test length(sol_op.eigenvector) == 16
+        @test sol_op.u === sol_op.eigenvector
+        @test isapprox(H * sol_op.u, sol_op.value .* sol_op.u, atol=1e-5)
 
         # Destructuring test
-        E0, psi = sol_sp
+        E0, psi = sol_op
         @test isapprox(E0, -2.0, atol=1e-6)
         @test length(psi) == 16
-        @test psi === sol_sp.u
+        @test psi === sol_op.u
 
         # Default algorithm dispatch
         sol_default = solve(prob)
         @test isapprox(sol_default.value, -2.0, atol=1e-6)
-        @test isapprox(sol_default.u, sol_sp.u, atol=1e-5)
+        @test isapprox(sol_default.u, sol_op.u, atol=1e-5)
 
         # 2. TwoPass Lanczos Variation
         alg_tp = Lanczos(variation=TwoPass(), maxiter=50, tol=1e-12, return_state=true)
         @test alg_tp.variation isa TwoPass
         sol_tp = solve(prob, alg_tp)
         @test isapprox(sol_tp.value, -2.0, atol=1e-6)
-        @test isapprox(sol_tp.value, sol_sp.value, atol=1e-10)
+        @test isapprox(sol_tp.value, sol_op.value, atol=1e-10)
         @test sol_tp.converged == true
         @test length(sol_tp.u) == 16
         @test isapprox(H * sol_tp.u, sol_tp.value .* sol_tp.u, atol=1e-5)
@@ -253,16 +253,30 @@ using QuantumKrylov
         @test length(psi_tp) == 16
 
         # 3. Energy-only calculations (return_state=false)
-        sol_sp_no_state = solve(prob, Lanczos(variation=SinglePass(), maxiter=50, tol=1e-12, return_state=false))
-        @test isapprox(sol_sp_no_state.value, -2.0, atol=1e-6)
-        @test_throws ErrorException sol_sp_no_state.u
-        @test_throws ErrorException sol_sp_no_state.state
+        sol_op_no_state = solve(prob, Lanczos(variation=OnePass(), maxiter=50, tol=1e-12, return_state=false))
+        @test isapprox(sol_op_no_state.value, -2.0, atol=1e-6)
+        @test_throws ErrorException sol_op_no_state.u
+        @test_throws ErrorException sol_op_no_state.state
 
         sol_tp_no_state = solve(prob, Lanczos(variation=TwoPass(), maxiter=50, tol=1e-12, return_state=false))
         @test isapprox(sol_tp_no_state.value, -2.0, atol=1e-6)
         @test_throws ErrorException sol_tp_no_state.u
 
-        # 4. ExcitedStatesProblem with Davidson and Lanczos
+        # 4. Runtime Argument & Policy Validation
+        @test_throws ErrorException solve(prob, Lanczos(maxiter=0))
+        @test_throws ErrorException solve(prob, Lanczos(maxiter=-10))
+        @test_throws ErrorException lanczos_ground_state(H; maxiter=0)
+        @test_throws ErrorException lanczos_lowest(H; n_eig=0)
+        @test_throws ErrorException lanczos_lowest(H; maxiter=0)
+
+        # Policy restriction: TwoPass with n_eig > 1 must throw ArgumentError
+        @test_throws ArgumentError solve(ExcitedStatesProblem(H, 2), Lanczos(variation=TwoPass()))
+        # TwoPass with n_eig == 1 succeeds
+        sol_ex_tp1 = solve(ExcitedStatesProblem(H, 1), Lanczos(variation=TwoPass()))
+        @test length(sol_ex_tp1.eigenvalues) == 1
+        @test isapprox(sol_ex_tp1.eigenvalues[1], -2.0, atol=1e-6)
+
+        # 5. ExcitedStatesProblem with Davidson and Lanczos (OnePass)
         ex_prob = ExcitedStatesProblem(H, 2)
         @test ex_prob isa AbstractQuantumProblem
         sol_dav = solve(ex_prob, Davidson(n_eig=2, max_subspace=10, tol=1e-6))
