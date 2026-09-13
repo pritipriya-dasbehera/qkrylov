@@ -8,9 +8,9 @@
 #include <cstdlib>
 
 #if defined(KOKKOS_ENABLE_CUDA)
-extern "C" int cudaGetDeviceCount(int* count);
+#include <cuda_runtime_api.h>
 #elif defined(KOKKOS_ENABLE_HIP)
-extern "C" int hipGetDeviceCount(int* count);
+#include <hip/hip_runtime_api.h>
 #endif
 
 namespace qkrylov {
