@@ -71,3 +71,11 @@ class TJSite(Site):
 
     def __repr__(self) -> str:
         return "TJSite()"
+
+
+# Aliases conforming to API blueprint
+SpinHalf = SpinHalfSite
+SpinS = SpinSSite
+Fermion = FermionSite
+Hubbard = HubbardSite
+TJ = TJSite

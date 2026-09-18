@@ -54,6 +54,10 @@ typedef struct qkrylov_device_vector_t  qkrylov_device_vector_t;
 typedef struct qkrylov_device_vector_t* qkrylov_device_vector_h;
 typedef qkrylov_device_vector_h         qkrylov_device_vector_fp64_h;
 typedef qkrylov_device_vector_h         qkrylov_device_vector_fp32_h;
+typedef struct qkrylov_ftlm_samples_t   qkrylov_ftlm_samples_t;
+typedef struct qkrylov_ftlm_samples_t*  qkrylov_ftlm_samples_h;
+typedef qkrylov_ftlm_samples_h          qkrylov_ftlm_samples_fp64_h;
+typedef qkrylov_ftlm_samples_h          qkrylov_ftlm_samples_fp32_h;
 
 /* -----------------------------------------------------------------------------
  * Sector API
@@ -276,6 +280,11 @@ typedef struct {
 } qkrylov_davidson_result_c_t;
 
 typedef struct {
+    int iterations;
+    int converged;
+} qkrylov_lanczos_lowest_result_c_t;
+
+typedef struct {
     float beta;
     float partition_function;
     float internal_energy;
@@ -290,6 +299,84 @@ typedef struct {
 } qkrylov_ftlm_result_fp64_t;
 
 typedef qkrylov_ftlm_result_fp64_t qkrylov_ftlm_result_c_t;
+
+typedef struct {
+    int num_betas;
+    int num_observables;
+    int64_t dimension;
+    const float* beta_grid;
+    const float* partition_functions;
+    const float* free_energies;
+    const float* internal_energies;
+    const float* specific_heats;
+    const float* entropies;
+    const float* effective_samples;
+    const float* observable_expectations_re; /* Row-major: num_observables x num_betas */
+    const float* observable_expectations_im; /* Row-major: num_observables x num_betas */
+    const float* observable_expectations;    /* Row-major: points to re */
+    const float* observable_errors;          /* Row-major: num_observables x num_betas */
+} qkrylov_ftlm_sweep_result_fp32_t;
+
+typedef struct {
+    int num_betas;
+    int num_observables;
+    int64_t dimension;
+    const double* beta_grid;
+    const double* partition_functions;
+    const double* free_energies;
+    const double* internal_energies;
+    const double* specific_heats;
+    const double* entropies;
+    const double* effective_samples;
+    const double* observable_expectations_re; /* Row-major: num_observables x num_betas */
+    const double* observable_expectations_im; /* Row-major: num_observables x num_betas */
+    const double* observable_expectations;    /* Row-major: points to re */
+    const double* observable_errors;          /* Row-major: num_observables x num_betas */
+} qkrylov_ftlm_sweep_result_fp64_t;
+
+typedef qkrylov_ftlm_sweep_result_fp64_t qkrylov_ftlm_sweep_result_c_t;
+
+typedef struct {
+    int num_times;
+    int num_observables;
+    const float* time_grid;
+    const float* survival_probabilities_re;
+    const float* survival_probabilities_im;
+    const float* observable_expectations_re;
+    const float* observable_expectations_im;
+} qkrylov_real_time_result_fp32_t;
+
+typedef struct {
+    int num_times;
+    int num_observables;
+    const double* time_grid;
+    const double* survival_probabilities_re;
+    const double* survival_probabilities_im;
+    const double* observable_expectations_re;
+    const double* observable_expectations_im;
+} qkrylov_real_time_result_fp64_t;
+
+typedef qkrylov_real_time_result_fp64_t qkrylov_real_time_result_c_t;
+
+typedef struct {
+    float beta;
+    int num_times;
+    const float* time_grid;
+    const float* correlations_re;
+    const float* correlations_im;
+    const float* correlation_errors;
+} qkrylov_ftlm_dynamics_result_fp32_t;
+
+typedef struct {
+    double beta;
+    int num_times;
+    const double* time_grid;
+    const double* correlations_re;
+    const double* correlations_im;
+    const double* correlation_errors;
+} qkrylov_ftlm_dynamics_result_fp64_t;
+
+typedef qkrylov_ftlm_dynamics_result_fp64_t qkrylov_ftlm_dynamics_result_c_t;
 
 typedef struct {
     float spectral_function;
@@ -315,6 +402,23 @@ QKRYLOV_API int   qkrylov_lanczos_ground_state_complex_fp32(qkrylov_hamiltonian_
                                                             float tol,
                                                             qkrylov_lanczos_result_fp32_t* result,
                                                             float* eigenvector_complex);
+QKRYLOV_API int   qkrylov_lanczos_two_pass_ground_state_fp32(qkrylov_hamiltonian_h h,
+                                                             int maxiter,
+                                                             float tol,
+                                                             qkrylov_lanczos_result_fp32_t* result);
+QKRYLOV_API int   qkrylov_lanczos_two_pass_ground_state_complex_fp32(qkrylov_hamiltonian_h h,
+                                                                     int maxiter,
+                                                                     float tol,
+                                                                     qkrylov_lanczos_result_fp32_t* result,
+                                                                     float* eigenvector_complex);
+QKRYLOV_API int   qkrylov_lanczos_lowest_complex_fp32(qkrylov_hamiltonian_h h,
+                                                      int n_eig,
+                                                      int maxiter,
+                                                      float tol,
+                                                      float* eigenvalues_out,
+                                                      float* eigenvectors_complex_out,
+                                                      qkrylov_lanczos_lowest_result_c_t* result_info,
+                                                      const float* initial_vector_complex);
 QKRYLOV_API int   qkrylov_davidson_lowest_complex_fp32(qkrylov_hamiltonian_h h,
                                                        int n_eig,
                                                        int max_subspace,
@@ -341,6 +445,56 @@ QKRYLOV_API int   qkrylov_ftlm_fp32(qkrylov_hamiltonian_h h,
                                     int n_random,
                                     int n_steps,
                                     qkrylov_ftlm_result_fp32_t* result);
+QKRYLOV_API int   qkrylov_ftlm_sample_fp32(qkrylov_hamiltonian_h h,
+                                           const qkrylov_hamiltonian_h* observables,
+                                           int num_observables,
+                                           int n_random,
+                                           int n_steps,
+                                           uint64_t seed,
+                                           qkrylov_ftlm_samples_h* out_samples);
+QKRYLOV_API int   qkrylov_ftlm_evaluate_sweep_fp32(qkrylov_ftlm_samples_h samples,
+                                                   const float* beta_grid,
+                                                   int num_betas,
+                                                   qkrylov_ftlm_sweep_result_fp32_t* result);
+QKRYLOV_API int   qkrylov_ftlm_sweep_fp32(qkrylov_hamiltonian_h h,
+                                          const float* beta_grid,
+                                          int num_betas,
+                                          const qkrylov_hamiltonian_h* observables,
+                                          int num_observables,
+                                          int n_random,
+                                          int n_steps,
+                                          uint64_t seed,
+                                          qkrylov_ftlm_sweep_result_fp32_t* result);
+QKRYLOV_API void  qkrylov_ftlm_sweep_result_free_fp32(qkrylov_ftlm_sweep_result_fp32_t* result);
+QKRYLOV_API int   qkrylov_ftlm_sweep_streamed_fp32(qkrylov_hamiltonian_h h,
+                                                  const float* beta_grid,
+                                                  int num_betas,
+                                                  const qkrylov_hamiltonian_h* observables,
+                                                  int num_observables,
+                                                  int n_random,
+                                                  int n_steps,
+                                                  uint64_t seed,
+                                                  qkrylov_ftlm_sweep_result_fp32_t* result);
+QKRYLOV_API int   qkrylov_time_evolve_fp32(qkrylov_hamiltonian_h h,
+                                          const float* psi0_complex,
+                                          const float* time_grid,
+                                          int num_times,
+                                          const qkrylov_hamiltonian_h* observables,
+                                          int num_observables,
+                                          int n_steps,
+                                          qkrylov_real_time_result_fp32_t* result);
+QKRYLOV_API void  qkrylov_real_time_result_free_fp32(qkrylov_real_time_result_fp32_t* result);
+QKRYLOV_API int   qkrylov_ftlm_dynamics_fp32(qkrylov_hamiltonian_h h,
+                                            float beta,
+                                            qkrylov_hamiltonian_h a,
+                                            qkrylov_hamiltonian_h b,
+                                            const float* time_grid,
+                                            int num_times,
+                                            int n_random,
+                                            int n_steps,
+                                            uint64_t seed,
+                                            qkrylov_ftlm_dynamics_result_fp32_t* result);
+QKRYLOV_API void  qkrylov_ftlm_dynamics_result_free_fp32(qkrylov_ftlm_dynamics_result_fp32_t* result);
 QKRYLOV_API int   qkrylov_solver_correction_vector_fp32(qkrylov_hamiltonian_h h,
                                                         const float* op_psi0_complex,
                                                         float e0,
@@ -370,6 +524,23 @@ QKRYLOV_API int    qkrylov_lanczos_ground_state_complex_fp64(qkrylov_hamiltonian
                                                               double tol,
                                                               qkrylov_lanczos_result_fp64_t* result,
                                                               double* eigenvector_complex);
+QKRYLOV_API int    qkrylov_lanczos_two_pass_ground_state_fp64(qkrylov_hamiltonian_h h,
+                                                              int maxiter,
+                                                              double tol,
+                                                              qkrylov_lanczos_result_fp64_t* result);
+QKRYLOV_API int    qkrylov_lanczos_two_pass_ground_state_complex_fp64(qkrylov_hamiltonian_h h,
+                                                                      int maxiter,
+                                                                      double tol,
+                                                                      qkrylov_lanczos_result_fp64_t* result,
+                                                                      double* eigenvector_complex);
+QKRYLOV_API int    qkrylov_lanczos_lowest_complex_fp64(qkrylov_hamiltonian_h h,
+                                                        int n_eig,
+                                                        int maxiter,
+                                                        double tol,
+                                                        double* eigenvalues_out,
+                                                        double* eigenvectors_complex_out,
+                                                        qkrylov_lanczos_lowest_result_c_t* result_info,
+                                                        const double* initial_vector_complex);
 QKRYLOV_API int    qkrylov_davidson_lowest_complex_fp64(qkrylov_hamiltonian_h h,
                                                         int n_eig,
                                                        int max_subspace,
@@ -396,6 +567,56 @@ QKRYLOV_API int    qkrylov_ftlm_fp64(qkrylov_hamiltonian_h h,
                                      int n_random,
                                      int n_steps,
                                      qkrylov_ftlm_result_fp64_t* result);
+QKRYLOV_API int    qkrylov_ftlm_sample_fp64(qkrylov_hamiltonian_h h,
+                                            const qkrylov_hamiltonian_h* observables,
+                                            int num_observables,
+                                            int n_random,
+                                            int n_steps,
+                                            uint64_t seed,
+                                            qkrylov_ftlm_samples_h* out_samples);
+QKRYLOV_API int    qkrylov_ftlm_evaluate_sweep_fp64(qkrylov_ftlm_samples_h samples,
+                                                    const double* beta_grid,
+                                                    int num_betas,
+                                                    qkrylov_ftlm_sweep_result_fp64_t* result);
+QKRYLOV_API int    qkrylov_ftlm_sweep_fp64(qkrylov_hamiltonian_h h,
+                                           const double* beta_grid,
+                                           int num_betas,
+                                           const qkrylov_hamiltonian_h* observables,
+                                           int num_observables,
+                                           int n_random,
+                                           int n_steps,
+                                           uint64_t seed,
+                                           qkrylov_ftlm_sweep_result_fp64_t* result);
+QKRYLOV_API void   qkrylov_ftlm_sweep_result_free_fp64(qkrylov_ftlm_sweep_result_fp64_t* result);
+QKRYLOV_API int    qkrylov_ftlm_sweep_streamed_fp64(qkrylov_hamiltonian_h h,
+                                                    const double* beta_grid,
+                                                    int num_betas,
+                                                    const qkrylov_hamiltonian_h* observables,
+                                                    int num_observables,
+                                                    int n_random,
+                                                    int n_steps,
+                                                    uint64_t seed,
+                                                    qkrylov_ftlm_sweep_result_fp64_t* result);
+QKRYLOV_API int    qkrylov_time_evolve_fp64(qkrylov_hamiltonian_h h,
+                                            const double* psi0_complex,
+                                            const double* time_grid,
+                                            int num_times,
+                                            const qkrylov_hamiltonian_h* observables,
+                                            int num_observables,
+                                            int n_steps,
+                                            qkrylov_real_time_result_fp64_t* result);
+QKRYLOV_API void   qkrylov_real_time_result_free_fp64(qkrylov_real_time_result_fp64_t* result);
+QKRYLOV_API int    qkrylov_ftlm_dynamics_fp64(qkrylov_hamiltonian_h h,
+                                              double beta,
+                                              qkrylov_hamiltonian_h a,
+                                              qkrylov_hamiltonian_h b,
+                                              const double* time_grid,
+                                              int num_times,
+                                              int n_random,
+                                              int n_steps,
+                                              uint64_t seed,
+                                              qkrylov_ftlm_dynamics_result_fp64_t* result);
+QKRYLOV_API void   qkrylov_ftlm_dynamics_result_free_fp64(qkrylov_ftlm_dynamics_result_fp64_t* result);
 QKRYLOV_API int    qkrylov_solver_correction_vector_fp64(qkrylov_hamiltonian_h h,
                                                          const double* op_psi0_complex,
                                                          double e0,
@@ -425,6 +646,23 @@ QKRYLOV_API int    qkrylov_lanczos_ground_state_complex(qkrylov_hamiltonian_h h,
                                                         double tol,
                                                         qkrylov_lanczos_result_c_t* result,
                                                         double* eigenvector_complex);
+QKRYLOV_API int    qkrylov_lanczos_two_pass_ground_state(qkrylov_hamiltonian_h h,
+                                                         int maxiter,
+                                                         double tol,
+                                                         qkrylov_lanczos_result_c_t* result);
+QKRYLOV_API int    qkrylov_lanczos_two_pass_ground_state_complex(qkrylov_hamiltonian_h h,
+                                                                 int maxiter,
+                                                                 double tol,
+                                                                 qkrylov_lanczos_result_c_t* result,
+                                                                 double* eigenvector_complex);
+QKRYLOV_API int    qkrylov_lanczos_lowest_complex(qkrylov_hamiltonian_h h,
+                                                  int n_eig,
+                                                  int maxiter,
+                                                  double tol,
+                                                  double* eigenvalues_out,
+                                                  double* eigenvectors_complex_out,
+                                                  qkrylov_lanczos_lowest_result_c_t* result_info,
+                                                  const double* initial_vector_complex);
 QKRYLOV_API int    qkrylov_davidson_lowest_complex(qkrylov_hamiltonian_h h,
                                                    int n_eig,
                                                    int max_subspace,
@@ -451,6 +689,58 @@ QKRYLOV_API int    qkrylov_ftlm(qkrylov_hamiltonian_h h,
                                 int n_random,
                                 int n_steps,
                                 qkrylov_ftlm_result_c_t* result);
+QKRYLOV_API int    qkrylov_ftlm_sample(qkrylov_hamiltonian_h h,
+                                       const qkrylov_hamiltonian_h* observables,
+                                       int num_observables,
+                                       int n_random,
+                                       int n_steps,
+                                       uint64_t seed,
+                                       qkrylov_ftlm_samples_h* out_samples);
+QKRYLOV_API int    qkrylov_ftlm_evaluate_sweep(qkrylov_ftlm_samples_h samples,
+                                               const double* beta_grid,
+                                               int num_betas,
+                                               qkrylov_ftlm_sweep_result_c_t* result);
+QKRYLOV_API int    qkrylov_ftlm_sweep(qkrylov_hamiltonian_h h,
+                                      const double* beta_grid,
+                                      int num_betas,
+                                      const qkrylov_hamiltonian_h* observables,
+                                      int num_observables,
+                                      int n_random,
+                                      int n_steps,
+                                      uint64_t seed,
+                                      qkrylov_ftlm_sweep_result_c_t* result);
+QKRYLOV_API void   qkrylov_ftlm_sweep_result_free(qkrylov_ftlm_sweep_result_c_t* result);
+QKRYLOV_API int    qkrylov_ftlm_sweep_streamed(qkrylov_hamiltonian_h h,
+                                               const double* beta_grid,
+                                               int num_betas,
+                                               const qkrylov_hamiltonian_h* observables,
+                                               int num_observables,
+                                               int n_random,
+                                               int n_steps,
+                                               uint64_t seed,
+                                               qkrylov_ftlm_sweep_result_c_t* result);
+QKRYLOV_API int    qkrylov_time_evolve(qkrylov_hamiltonian_h h,
+                                       const double* psi0_complex,
+                                       const double* time_grid,
+                                       int num_times,
+                                       const qkrylov_hamiltonian_h* observables,
+                                       int num_observables,
+                                       int n_steps,
+                                       qkrylov_real_time_result_c_t* result);
+QKRYLOV_API void   qkrylov_real_time_result_free(qkrylov_real_time_result_c_t* result);
+QKRYLOV_API int    qkrylov_ftlm_dynamics(qkrylov_hamiltonian_h h,
+                                         double beta,
+                                         qkrylov_hamiltonian_h a,
+                                         qkrylov_hamiltonian_h b,
+                                         const double* time_grid,
+                                         int num_times,
+                                         int n_random,
+                                         int n_steps,
+                                         uint64_t seed,
+                                         qkrylov_ftlm_dynamics_result_c_t* result);
+QKRYLOV_API void   qkrylov_ftlm_dynamics_result_free(qkrylov_ftlm_dynamics_result_c_t* result);
+QKRYLOV_API void   qkrylov_ftlm_samples_destroy(qkrylov_ftlm_samples_h samples);
+QKRYLOV_API int    qkrylov_ftlm_samples_precision(qkrylov_ftlm_samples_h samples);
 QKRYLOV_API int    qkrylov_solver_correction_vector(qkrylov_hamiltonian_h h,
                                                     const double* op_psi0_complex,
                                                     double e0,
